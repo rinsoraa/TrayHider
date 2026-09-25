@@ -1,0 +1,271 @@
+<Window x:Class="TrayHider.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TrayHider"
+        Title="托盘图标管家"
+        Width="880" Height="620"
+        MinWidth="720" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource App.Background}"
+        FontFamily="{DynamicResource App.FontFamily}"
+        FontSize="{DynamicResource App.FontSize.Body}"
+        Foreground="{DynamicResource App.TextPrimary}"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextRenderingMode="ClearType"
+        WindowStyle="None"
+        AllowsTransparency="False">
+
+    <Border Background="{DynamicResource App.Background}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ==================================================== 自定义标题栏 -->
+            <Grid Grid.Row="0" Height="48" Background="Transparent"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal"
+                            Margin="16,0,0,0" VerticalAlignment="Center">
+                    <Border Width="20" Height="20" CornerRadius="5"
+                            Background="{DynamicResource App.Accent}"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource App.AccentText}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="托盘图标管家"
+                               Margin="10,0,0,0"
+                               FontSize="{DynamicResource App.FontSize.Caption}"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource App.TextSecondary}" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                            VerticalAlignment="Top" Margin="0,6,8,0">
+                    <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButtonBase}"
+                            Click="Minimize_Click" ToolTip="最小化">
+                        <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
+                    </Button>
+                    <Button x:Name="CloseButton" Style="{StaticResource CaptionCloseButton}"
+                            Click="Close_Click" ToolTip="关闭到托盘">
+                        <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- ==================================================== 主体 -->
+            <Grid Grid.Row="1" Margin="28,8,28,24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- 顶部标题与说明 -->
+                <StackPanel Grid.Row="0" Margin="2,0,2,18">
+                    <TextBlock Text="托盘图标"
+                               FontSize="{DynamicResource App.FontSize.Title}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource App.TextPrimary}" />
+                    <TextBlock Margin="0,6,0,0"
+                               Text="勾选要隐藏的图标。被隐藏的程序仍在后台正常运行，只是不再出现在托盘与溢出面板中。"
+                               TextWrapping="Wrap"
+                               FontSize="{DynamicResource App.FontSize.Caption}"
+                               Foreground="{DynamicResource App.TextSecondary}" />
+                </StackPanel>
+
+                <!-- 操作工具条 -->
+                <Border Grid.Row="1"
+                        Background="{DynamicResource App.CardBackground}"
+                        BorderBrush="{DynamicResource App.Border}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,12"
+                        Margin="0,0,0,14">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <Button Content="全部勾选" Style="{StaticResource StandardButton}"
+                                    Click="SelectAll_Click" Margin="0,0,8,0" />
+                            <Button Content="反选" Style="{StaticResource StandardButton}"
+                                    Click="Invert_Click" Margin="0,0,8,0" />
+                            <Button Content="取消勾选" Style="{StaticResource StandardButton}"
+                                    Click="ClearSelection_Click" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding SelectionSummary}"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   FontSize="{DynamicResource App.FontSize.Caption}"
+                                   Foreground="{DynamicResource App.TextSecondary}" />
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal">
+                            <Button Content="全部显示" Style="{StaticResource StandardButton}"
+                                    Click="ShowAll_Click" Margin="0,0,8,0" />
+                            <Button Content="显示所选" Style="{StaticResource StandardButton}"
+                                    Click="ShowSelected_Click" Margin="0,0,8,0" />
+                            <Button Content="全部隐藏" Style="{StaticResource StandardButton}"
+                                    Click="HideAll_Click" Margin="0,0,8,0" />
+                            <Button Content="隐藏所选" Style="{StaticResource AccentButton}"
+                                    Click="HideSelected_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- 图标列表 -->
+                <Border Grid.Row="2"
+                        Background="{DynamicResource App.CardBackground}"
+                        BorderBrush="{DynamicResource App.Border}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="4">
+                    <Grid>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Padding="0">
+                            <ItemsControl x:Name="IconList" ItemsSource="{Binding Icons}">
+                                <ItemsControl.Template>
+                                    <ControlTemplate TargetType="ItemsControl">
+                                        <ItemsPresenter />
+                                    </ControlTemplate>
+                                </ItemsControl.Template>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="Row"
+                                                CornerRadius="6"
+                                                Padding="12,10"
+                                                Margin="3,2"
+                                                Background="Transparent"
+                                                MouseLeftButtonDown="Row_Click"
+                                                ToolTip="单击勾选，双击立即隐藏 / 显示">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox Grid.Column="0"
+                                                          Style="{StaticResource ListCheckBox}"
+                                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                          VerticalAlignment="Center"
+                                                          Margin="2,0,12,0" />
+
+                                                <Border Grid.Column="1"
+                                                        Width="28" Height="28"
+                                                        CornerRadius="6"
+                                                        Margin="0,0,12,0"
+                                                        VerticalAlignment="Center">
+                                                    <Image Source="{Binding Icon}"
+                                                           Width="24" Height="24"
+                                                           RenderOptions.BitmapScalingMode="HighQuality" />
+                                                </Border>
+
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               FontSize="{DynamicResource App.FontSize.Body}"
+                                                               Foreground="{DynamicResource App.TextPrimary}" />
+                                                    <TextBlock Text="{Binding SubTitle}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Margin="0,2,0,0"
+                                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                                </StackPanel>
+
+                                                <Border Grid.Column="3"
+                                                        x:Name="StateBadge"
+                                                        CornerRadius="4"
+                                                        Padding="8,3"
+                                                        VerticalAlignment="Center"
+                                                        Background="{DynamicResource App.ControlFill}">
+                                                    <TextBlock x:Name="StateText"
+                                                               Text="{Binding StateText}"
+                                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                                               Foreground="{DynamicResource App.TextSecondary}" />
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+
+                                        <DataTemplate.Triggers>
+                                            <Trigger SourceName="Row" Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Row" Property="Background"
+                                                        Value="{DynamicResource App.CardBackgroundHover}" />
+                                            </Trigger>
+                                            <DataTrigger Binding="{Binding IsHidden}" Value="True">
+                                                <Setter TargetName="StateBadge" Property="Background"
+                                                        Value="{DynamicResource App.Accent}" />
+                                                <Setter TargetName="StateText" Property="Foreground"
+                                                        Value="{DynamicResource App.AccentText}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <!-- 空状态 -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Visibility="{Binding HasIcons, Converter={StaticResource BoolToVisibilityInverse}}">
+                            <TextBlock Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="28"
+                                       HorizontalAlignment="Center"
+                                       Foreground="{DynamicResource App.TextTertiary}" />
+                            <TextBlock Text="{Binding EmptyHint}"
+                                       Margin="0,10,0,0"
+                                       TextAlignment="Center"
+                                       FontSize="{DynamicResource App.FontSize.Caption}"
+                                       Foreground="{DynamicResource App.TextTertiary}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- 底部状态栏 -->
+                <Grid Grid.Row="3" Margin="2,10,2,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse x:Name="StatusDot" Width="7" Height="7"
+                                 Fill="{DynamicResource App.Accent}" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding StatusText}"
+                                   Margin="8,0,0,0"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   FontSize="{DynamicResource App.FontSize.Caption}"
+                                   Foreground="{DynamicResource App.TextSecondary}" />
+                    </StackPanel>
+
+                    <Button Grid.Column="1"
+                            x:Name="SettingsButton"
+                            Style="{StaticResource StandardButton}"
+                            Click="OpenSettings_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="12" VerticalAlignment="Center" />
+                            <TextBlock Text="设置" Margin="8,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

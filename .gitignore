@@ -1,0 +1,18 @@
+# 构建产物
+bin/
+obj/
+dist/
+*.pdb
+*.pdb~
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# 系统
+Thumbs.db
+.DS_Store
+Desktop.ini
