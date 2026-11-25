@@ -325,6 +325,19 @@ bin/Release/net8.0-windows/win-x64/publish/portable/
 bin/Release/net8.0-windows/win-x64/publish/lite/
 ```
 
+### 发版前必须跑一次启动冒烟
+
+**编译 0 warning 0 error 并不等于程序能启动。** WPF 的数据绑定错误要到窗口显示之后
+（甚至是显示后几秒、绑定引擎的排版回调里）才会抛异常，表现为进程无提示退出（退出码 0xE0434352）。
+v1.2.0 开发期间就踩过一次（`<Run Text="{Binding 只读属性}"/>` —— Run.Text 默认 TwoWay 绑定）。
+
+```powershell
+# 启动 20 秒，断言进程存活且主窗口句柄非 0，失败自动打印最近的 .NET 未处理异常
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
+# 也可以直接验证发布产物
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1 -ExePath bin\Release\net8.0-windows\win-x64\publish\portable\TrayHider.exe
+```
+
 ## 项目结构
 
 ```text
