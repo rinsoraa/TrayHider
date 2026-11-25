@@ -1,7 +1,7 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using System.Windows.Input;
 using TrayHider.Services;
 using TrayHider.ViewModels;
 using MessageBox = System.Windows.MessageBox;
@@ -12,30 +12,59 @@ public partial class SettingsWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private readonly MainWindow _owner;
-    private bool _recordingHotkey;
+    private readonly AppConfig _config;
+    private readonly ObservableCollection<HotkeyRowViewModel> _hotkeyRows = new();
+    private HotkeyRowViewModel? _recordingRow;
 
     public SettingsWindow(MainViewModel viewModel, MainWindow owner)
     {
         InitializeComponent();
         _viewModel = viewModel;
         _owner = owner;
+
+        var app = (App)System.Windows.Application.Current;
+        _config = app.Config;
+
         DataContext = viewModel;
         PreviewKeyDown += SettingsWindow_PreviewKeyDown;
 
-        Loaded += (_, _) => WindowChrome.Apply(this);
+        BuildHotkeyRows();
+
+        Loaded += (_, _) =>
+        {
+            WindowChrome.Apply(this);
+
+            // 窗口隐藏相关开关由 WindowListViewModel 持有，这里给该卡片单独换数据源
+            WindowOptionsCard.DataContext = app.WindowViewModel;
+        };
     }
 
     public string ConfigPathText => AppConfig.ConfigPath;
 
-    private void ChangeHotkey_Click(object sender, RoutedEventArgs e)
+    // ---------------------------------------------------------------- 快捷键
+
+    private void BuildHotkeyRows()
     {
-        _recordingHotkey = true;
-        ChangeHotkeyButton.Content = "按下新的快捷键";
+        _hotkeyRows.Clear();
+        foreach (var action in HotkeyActions.All)
+        {
+            _hotkeyRows.Add(new HotkeyRowViewModel(action, _config.GetHotkey(action).ToString()));
+        }
+        HotkeyList.ItemsSource = _hotkeyRows;
+    }
+
+    private void HotkeyRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: HotkeyRowViewModel row }) return;
+
+        foreach (var item in _hotkeyRows) item.IsRecording = false;
+        row.IsRecording = true;
+        _recordingRow = row;
     }
 
     private void SettingsWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (!_recordingHotkey) return;
+        if (_recordingRow == null) return;
         e.Handled = true;
 
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
@@ -45,6 +74,7 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        // 单纯按下修饰键时等待用户继续按主键
         if (key is System.Windows.Input.Key.LeftCtrl or System.Windows.Input.Key.RightCtrl or
             System.Windows.Input.Key.LeftAlt or System.Windows.Input.Key.RightAlt or
             System.Windows.Input.Key.LeftShift or System.Windows.Input.Key.RightShift or
@@ -62,7 +92,7 @@ public partial class SettingsWindow : Window
 
         if (modifiers == 0)
         {
-            System.Windows.MessageBox.Show(this,
+            MessageBox.Show(this,
                 "快捷键至少需要一个修饰键，例如 Ctrl、Alt、Shift 或 Win。",
                 "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
             StopRecording();
@@ -70,11 +100,19 @@ public partial class SettingsWindow : Window
         }
 
         var virtualKey = System.Windows.Input.KeyInterop.VirtualKeyFromKey(key);
+        var action = _recordingRow.Action;
         var app = (App)System.Windows.Application.Current;
-        if (!app.TryUpdateHotkey(modifiers, virtualKey))
+
+        if (app.TryUpdateHotkey(action, modifiers, virtualKey))
         {
-            System.Windows.MessageBox.Show(this,
-                "快捷键注册失败，可能已被其他软件占用，请换一个组合。",
+            _recordingRow.UpdateText(_config.GetHotkey(action).ToString());
+            _viewModel.NotifyHotkeyChanged();
+            app.WindowViewModel?.NotifyHotkeyChanged();
+        }
+        else
+        {
+            MessageBox.Show(this,
+                "快捷键注册失败，可能已被其他软件（或本软件的其他动作）占用，请换一个组合。",
                 "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
@@ -83,11 +121,14 @@ public partial class SettingsWindow : Window
 
     private void StopRecording()
     {
-        _recordingHotkey = false;
-        ChangeHotkeyButton.Content = "修改快捷键";
+        if (_recordingRow != null)
+        {
+            _recordingRow.IsRecording = false;
+            _recordingRow = null;
+        }
     }
 
-    private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void TitleBar_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         try
         {
@@ -105,7 +146,7 @@ public partial class SettingsWindow : Window
     {
         _viewModel.RestoreAll();
         MessageBox.Show(this,
-            "已清空所有隐藏记录。\n\n图标将在对应程序重新注册后回到托盘；若希望立即恢复，可重启对应的程序。",
+            "已清空所有隐藏记录。\n\n图标将回到托盘；若个别程序没有响应托盘重建，重启该程序即可让右键菜单恢复正常。",
             "托盘图标管家",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
@@ -132,7 +173,8 @@ public partial class SettingsWindow : Window
     private void Exit_Click(object sender, RoutedEventArgs e)
     {
         var result = MessageBox.Show(this,
-            "确定要退出托盘图标管家吗？\n\n退出后，已被隐藏的图标将在对应程序重新注册后回到托盘，本软件也不再提供隐藏守护。",
+            "确定要退出托盘图标管家吗？\n\n退出后，已被隐藏的图标将在对应程序重新注册后回到托盘，被隐藏的窗口会被恢复，" +
+            "本软件也不再提供隐藏守护。",
             "确认退出",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);

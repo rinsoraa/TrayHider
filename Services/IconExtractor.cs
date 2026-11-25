@@ -14,16 +14,58 @@ namespace TrayHider.Services;
 ///  1. 目标进程主模块内的图标资源（最稳定，跨会话有效）
 ///  2. 目标窗口的 WM_GETICON（部分应用才提供）
 /// 两者都拿不到时回退到默认图标。
+///
+/// 内存相关的三个约束（列表里最多显示到 32px，没必要为图标常驻大位图）：
+///  * 一律按 <see cref="IconPixelSize"/> 解码，避免把 48/64/256 的源图标整张留在内存；
+///  * exe 路径 → 已冻结 ImageSource 做弱引用缓存，重复刷新不再重复解码；
+///  * 备份用的 IconSnapshot 规范化成 ≤32×32 的 PNG（config.json 里的 base64 也随之变小）。
 /// </summary>
 internal static class IconExtractor
 {
+    /// <summary>托盘图标的标准边长（像素）。列表显示尺寸不会超过它。</summary>
+    private const int IconPixelSize = 32;
+
+    /// <summary>
+    /// 图标缓存上限。WeakReference 保证列表条目被移除后位图能真正回收；
+    /// 上限只是防止极端情况下字典无限膨胀（本机 121 个托盘条目对应 101 个 exe，
+    /// 因此留到 128，避免"图标数略多于上限"时把缓存反复清空）。
+    /// </summary>
+    private const int MaxCachedIcons = 128;
+
+    private static readonly object CacheLock = new();
+    private static readonly Dictionary<string, WeakReference<ImageSource>> IconCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 从可执行文件提取图标（带缓存）。
+    /// 缓存命中直接返回同一份已 Freeze 的 ImageSource —— 多个条目共用一份位图，
+    /// 既省内存也省掉重复的 ExtractAssociatedIcon + PNG 编解码。
+    /// </summary>
     public static ImageSource? FromExecutable(string executablePath)
     {
-        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+        if (string.IsNullOrWhiteSpace(executablePath)) return null;
+
+        lock (CacheLock)
         {
-            return null;
+            if (IconCache.TryGetValue(executablePath, out var weak))
+            {
+                if (weak.TryGetTarget(out var cached)) return cached;
+                IconCache.Remove(executablePath);   // 已被回收，去掉空壳
+            }
         }
 
+        if (!File.Exists(executablePath)) return null;
+
+        var image = LoadFromExecutable(executablePath);
+        if (image != null)
+        {
+            lock (CacheLock) Remember(executablePath, image);
+        }
+        return image;
+    }
+
+    private static ImageSource? LoadFromExecutable(string executablePath)
+    {
         try
         {
             using var icon = Icon.ExtractAssociatedIcon(executablePath);
@@ -33,6 +75,46 @@ internal static class IconExtractor
         {
             return null;
         }
+    }
+
+    private static void Remember(string executablePath, ImageSource image)
+    {
+        if (IconCache.Count >= MaxCachedIcons)
+        {
+            TrimDeadEntries();
+            if (IconCache.Count >= MaxCachedIcons) EvictOne();
+        }
+
+        IconCache[executablePath] = new WeakReference<ImageSource>(image);
+    }
+
+    /// <summary>摘掉已经被 GC 回收的缓存条目。</summary>
+    private static void TrimDeadEntries()
+    {
+        List<string>? dead = null;
+        foreach (var pair in IconCache)
+        {
+            if (!pair.Value.TryGetTarget(out _)) (dead ??= new List<string>()).Add(pair.Key);
+        }
+
+        if (dead == null) return;
+        foreach (var key in dead) IconCache.Remove(key);
+    }
+
+    /// <summary>
+    /// 缓存满时只淘汰一个条目（取字典里最早的那个），不做整体清空 ——
+    /// 整体清空在"图标数略多于上限"时会让缓存每次都被清掉、反复重建，反而更慢。
+    /// </summary>
+    private static void EvictOne()
+    {
+        string? victim = null;
+        foreach (var key in IconCache.Keys)
+        {
+            victim = key;
+            break;
+        }
+
+        if (victim != null) IconCache.Remove(victim);
     }
 
     /// <summary>
@@ -79,29 +161,26 @@ internal static class IconExtractor
         }
     }
 
-    /// <summary>把 Shell 的原始快照标准化为较小的 PNG，仅用于旧配置迁移和注册表缺失时的恢复兜底。</summary>
+    /// <summary>
+    /// 把 Shell 的原始快照规范化为 ≤32×32 的 PNG。两个用途：
+    ///   1. 旧配置迁移（旧版备份里是 DIB 或大尺寸 PNG）；
+    ///   2. 隐藏图标时把注册表快照收进 config.json —— 缩到 32px 后 base64 长度也一并变小。
+    /// 本来就是 ≤32×32 的 PNG 时原样返回（不复制，避免多留一份大数组）。
+    /// </summary>
     public static byte[]? NormalizeSnapshotToPng(byte[] data)
     {
-        if (data.Length >= 8 &&
-            data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+        if (data is not { Length: >= 8 }) return null;
+
+        if (IsPng(data) &&
+            TryReadPngSize(data, out var width, out var height) &&
+            width <= IconPixelSize && height <= IconPixelSize)
         {
-            return data.ToArray();
+            return data;
         }
 
-        if (FromSnapshotBytes(data) is not BitmapSource bitmapSource) return null;
+        if (DecodeSnapshot(data) is not ImageSource decoded) return null;
 
-        try
-        {
-            using var stream = new MemoryStream();
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
-            encoder.Save(stream);
-            return stream.ToArray();
-        }
-        catch
-        {
-            return null;
-        }
+        return EncodePng(ScaleToTraySize(decoded));
     }
 
     /// <summary>
@@ -139,12 +218,7 @@ internal static class IconExtractor
 
     private static ImageSource? TryDecodePng(byte[] data)
     {
-        // PNG 魔数
-        if (data.Length < 8 ||
-            data[0] != 0x89 || data[1] != 0x50 || data[2] != 0x4E || data[3] != 0x47)
-        {
-            return null;
-        }
+        if (!IsPng(data)) return null;
 
         try
         {
@@ -152,6 +226,7 @@ internal static class IconExtractor
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
+            image.DecodePixelWidth = IconPixelSize;   // 大尺寸快照直接按托盘尺寸解码
             image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
@@ -193,7 +268,6 @@ internal static class IconExtractor
                         bw.Write(data);
                     }
                     ms.Position = 0;
-                    ms.Position = 0;
 
                     using var bmp = new Bitmap(ms);
                     return ToImageSource(bmp);
@@ -208,6 +282,7 @@ internal static class IconExtractor
         return null;
     }
 
+    /// <summary>把位图转成按 <see cref="IconPixelSize"/> 解码、已 Freeze 的 BitmapImage。</summary>
     private static ImageSource? ToImageSource(Bitmap bitmap)
     {
         try
@@ -219,6 +294,7 @@ internal static class IconExtractor
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
+            image.DecodePixelWidth = IconPixelSize;
             image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
@@ -234,22 +310,70 @@ internal static class IconExtractor
     {
         try
         {
-            using var stream = new MemoryStream();
             using var bitmap = icon.ToBitmap();
-            bitmap.Save(stream, ImageFormat.Png);
-            stream.Position = 0;
-
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.StreamSource = stream;
-            image.EndInit();
-            image.Freeze();
-            return image;
+            return ToImageSource(bitmap);
         }
         catch
         {
             return null;
         }
     }
+
+    /// <summary>保证位图长边不超过托盘尺寸（解码路径已缩放，这里只是兜底）。</summary>
+    private static ImageSource ScaleToTraySize(ImageSource source)
+    {
+        if (source is not BitmapSource bitmap) return source;
+        if (bitmap.PixelWidth <= IconPixelSize && bitmap.PixelHeight <= IconPixelSize) return bitmap;
+
+        var scale = IconPixelSize / (double)Math.Max(bitmap.PixelWidth, bitmap.PixelHeight);
+        var scaled = new TransformedBitmap(bitmap, new ScaleTransform(scale, scale));
+        scaled.Freeze();
+        return scaled;
+    }
+
+    private static byte[]? EncodePng(ImageSource source)
+    {
+        if (source is not BitmapSource bitmap) return null;
+
+        try
+        {
+            using var stream = new MemoryStream();
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            encoder.Save(stream);
+            return stream.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsPng(byte[] data)
+        => data.Length >= 8 &&
+           data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47;
+
+    /// <summary>从 PNG 的 IHDR 里读出像素宽高（不需要解码整张图）。</summary>
+    private static bool TryReadPngSize(byte[] data, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+
+        // 8 字节签名 + 4 字节块长度 + 4 字节块类型 "IHDR"，之后是宽高各 4 字节（大端）
+        if (data.Length < 24) return false;
+        if (data[12] != (byte)'I' || data[13] != (byte)'H' || data[14] != (byte)'D' || data[15] != (byte)'R')
+        {
+            return false;
+        }
+
+        width = (int)ReadBigEndianUInt32(data, 16);
+        height = (int)ReadBigEndianUInt32(data, 20);
+        return width > 0 && height > 0;
+    }
+
+    private static uint ReadBigEndianUInt32(byte[] data, int offset)
+        => ((uint)data[offset] << 24)
+         | ((uint)data[offset + 1] << 16)
+         | ((uint)data[offset + 2] << 8)
+         | data[offset + 3];
 }

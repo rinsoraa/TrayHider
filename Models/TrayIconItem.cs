@@ -12,6 +12,7 @@ public sealed class TrayIconItem : INotifyPropertyChanged
 {
     private bool _isSelected;
     private bool _isHidden;
+    private bool _callbackDegraded;
     private string _displayName = string.Empty;
     private string _processName = string.Empty;
     private ImageSource? _icon;
@@ -81,7 +82,29 @@ public sealed class TrayIconItem : INotifyPropertyChanged
         }
     }
 
-    public string StateText => IsHidden ? "已隐藏" : "显示中";
+    /// <summary>
+    /// 恢复（显示）时目标程序未响应 TaskbarCreated，只能由本进程伪造 NIM_ADD 重建。
+    /// 这种状态下图标看得见，但 Shell 会把鼠标消息投给目标程序并不处理的回调消息，
+    /// 所以右键菜单/双击可能失效；重启该程序即可恢复（它会用自己的回调重新注册）。
+    /// 程序重启后（进程号变化）或图标重新被隐藏时自动清除。
+    /// </summary>
+    public bool CallbackDegraded
+    {
+        get => _callbackDegraded;
+        set
+        {
+            if (_callbackDegraded != value)
+            {
+                _callbackDegraded = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(StateText));
+            }
+        }
+    }
+
+    public string StateText => IsHidden
+        ? "已隐藏"
+        : _callbackDegraded ? "显示中 · 右键菜单可能失效" : "显示中";
 
     public string SubTitle
     {

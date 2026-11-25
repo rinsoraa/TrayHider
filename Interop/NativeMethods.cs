@@ -20,13 +20,65 @@ internal static class NativeMethods
     internal const int SHCNE_ASSOCCHANGED = 0x08000000;
     internal const uint SHCNF_IDLIST = 0x0000;
 
-    // ---------------------------------------------------------------- 窗口查找
+    // ---------------------------------------------------------------- 窗口查找 / 枚举
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     internal static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+
+    /// <summary>枚举子窗口（按父窗口过滤，<paramref name="hWndParent"/> 为 null 时枚举全部顶级窗口）。</summary>
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    internal static extern IntPtr FindWindowEx(IntPtr hWndParent, IntPtr hWndChildAfter, string? lpszClass, string? lpszWindow);
+
+    /// <summary>按 Z 序枚举所有顶级窗口（不含消息专用窗口）。</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    /// <summary>枚举指定窗口的全部子窗口（递归）。</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder name, int max);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowVisible(IntPtr hWnd);
+
+    /// <summary>窗口枚举回调。<c>return true</c> 表示继续枚举。</summary>
+    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    /// <summary>
+    /// 消息专用窗口的父句柄。这类窗口不会出现在 EnumWindows 的遍历结果里
+    /// （.NET 的 NotifyIcon、大量 Electron 应用的托盘窗口都是这类窗口），
+    /// 只能用 FindWindowEx(HWND_MESSAGE, ...) 逐个挂出来。
+    /// </summary>
+    internal static readonly IntPtr HWND_MESSAGE = new(-3);
+
+    // ---------------------------------------------------------------- 消息投递
+
+    /// <summary>
+    /// 注册一条系统级窗口消息，返回它在本会话中的唯一 ID（失败返回 0）。
+    /// 同一条名字在所有进程中拿到同一个 ID，因此可以跨进程投递。
+    /// </summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern uint RegisterWindowMessage(string lpString);
+
+    /// <summary>
+    /// 向指定窗口投递消息（异步入队，不等待目标处理完）。
+    /// 注意：跨完整性级别（普通进程 → 提权进程）会被 UIPI 拦掉并返回 false。
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
     // ---------------------------------------------------------------- 全局热键
 
