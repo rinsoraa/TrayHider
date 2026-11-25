@@ -140,6 +140,16 @@ public sealed class AppConfig
     /// </summary>
     public List<string> RebuildUnsupported { get; set; } = new();
 
+    /// <summary>
+    /// 预置的"已知不支持托盘重建"程序（实测：火绒安全软件托盘、NVIDIA 容器进程、腾讯反作弊托盘）。
+    /// 名单会在运行时自动学习/撤销，这里只是让新用户第一次隐藏这些程序时就能收到提示，
+    /// 不用先踩一次"图标回来了但点不动"的坑。
+    /// </summary>
+    internal static readonly string[] KnownUnsupportedSeed =
+    {
+        "HipsTray", "nvcontainer", "NVDisplay.Container", "ACE-Tray"
+    };
+
     // ---------------------------------------------------------------- 读写
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -230,6 +240,9 @@ public sealed class AppConfig
             RebuildUnsupported[i] = name;
         }
         RebuildUnsupported.RemoveAll(string.IsNullOrEmpty);
+
+        // 空名单时预置已知样本（用户后续的隐藏/恢复会继续自动学习或撤销）
+        if (RebuildUnsupported.Count == 0) RebuildUnsupported.AddRange(KnownUnsupportedSeed);
 
         // ---- 快捷键：旧版单快捷键 → 多动作表（向后兼容，旧配置的自定义快捷键不会丢）----
         var legacyModifiers = HotkeyModifiers & ~0x4000;
