@@ -298,7 +298,9 @@
                                    TextTrimming="CharacterEllipsis"
                                    FontSize="{DynamicResource App.FontSize.Caption}"
                                    Foreground="{DynamicResource App.TextTertiary}">
-                            <Run Text="快捷键：" /><Run Text="{Binding HotkeyText}" />
+                            <!-- 注意：Run.Text 默认 TwoWay 绑定，绑定只读属性必须显式 Mode=OneWay，
+                                 否则窗口 Show 时抛 InvalidOperationException 直接崩掉整个程序。 -->
+                            <Run Text="快捷键：" /><Run Text="{Binding HotkeyText, Mode=OneWay}" />
                         </TextBlock>
                     </Grid>
                 </Grid>
