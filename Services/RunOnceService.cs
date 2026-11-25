@@ -87,6 +87,69 @@ internal static class RunOnceService
         return hidden;
     }
 
+    /// <summary>
+    /// 统计里"还没就绪"的记录数：这些程序当前没在运行（或图标还没被隐藏）。
+    /// 用于登录后判断是否可以静默退出：全部隐藏完就退出，不再空转。
+    /// </summary>
+    public static int CountPending(AppConfig config)
+    {
+        var pending = 0;
+        foreach (var record in config.HiddenBackups.Values)
+        {
+            if (record.RestorePending) continue;
+            if (!TrayIconController.TryCreateIdentity(record.Uid, record.IconGuid, out var identity)) continue;
+
+            var processName = ProcessNameOf(record.ExecutablePath);
+            if (processName.Length == 0) continue;
+
+            var hwnd = TrayIconController.FindTrayWindow(processName, identity);
+            if (hwnd == IntPtr.Zero) { pending++; continue; }
+            if (TrayIconController.IsIconDisplayed(hwnd, identity)) pending++;
+        }
+
+        return pending;
+    }
+
+    /// <summary>把本次隐藏的统计写盘（%AppData%\TrayHider\runonce-stats.json），便于排查"为什么某个图标没隐藏"。</summary>
+    public static void WriteStats(AppConfig config, int hidden, int pending, long elapsedMs)
+    {
+        try
+        {
+            var path = Path.Combine(AppConfig.ConfigDirectory, "runonce-stats.json");
+            var hiddenNames = new List<string>();
+            var pendingNames = new List<string>();
+
+            foreach (var record in config.HiddenBackups.Values)
+            {
+                if (record.RestorePending) continue;
+                var processName = ProcessNameOf(record.ExecutablePath);
+                if (processName.Length == 0) continue;
+
+                if (!TrayIconController.TryCreateIdentity(record.Uid, record.IconGuid, out var identity)) continue;
+                var hwnd = TrayIconController.FindTrayWindow(processName, identity);
+                var done = hwnd != IntPtr.Zero && !TrayIconController.IsIconDisplayed(hwnd, identity);
+                (done ? hiddenNames : pendingNames).Add(processName);
+            }
+
+            var json = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                time = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                applied = hidden,
+                pending = pending,
+                elapsedMs,
+                hiddenProcesses = hiddenNames,
+                pendingProcesses = pendingNames
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+            Directory.CreateDirectory(AppConfig.ConfigDirectory);
+            File.WriteAllText(path, json);
+        }
+        catch
+        {
+            // 统计失败不影响隐藏本身
+        }
+    }
+
     /// <summary>设置界面开关：写入配置、同步自启动参数与计划任务。返回给用户看的说明。</summary>
     public static string SetEnabled(AppConfig config, bool enabled)
     {
@@ -132,8 +195,28 @@ internal static class RunOnceService
     public static bool IsScheduleInstalled()
         => Run("schtasks.exe", "/Query /TN " + Quote(TaskName), out _);
 
+    /// <summary>
+    /// 删除计划任务。任务正在运行（--apply-once 每隔几分钟就跑一次）时 /Delete 会被拒绝，
+    /// 所以先禁用、再删除，失败则短暂重试。
+    /// </summary>
     public static bool RemoveSchedule()
-        => Run("schtasks.exe", "/Delete /TN " + Quote(TaskName) + " /F", out _);
+    {
+        var q = ((char)34).ToString();
+        Run("schtasks.exe", "/Change /TN " + q + TaskName + q + " /DISABLE", out _);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            if (!IsScheduleInstalled()) return true;
+            if (Run("schtasks.exe", "/Delete /TN " + q + TaskName + q + " /F", out var error)) return true;
+            if (attempt == 2) LastError = error;
+            Thread.Sleep(300);
+        }
+
+        return !IsScheduleInstalled();
+    }
+
+    /// <summary>最近一次计划任务操作的错误输出（供界面如实显示）。</summary>
+    public static string LastError { get; private set; } = string.Empty;
 
     /// <summary>开机自启动项：不常驻模式下传入 --apply-once，否则维持 --minimized。</summary>
     public static string StartupArguments(AppConfig config)

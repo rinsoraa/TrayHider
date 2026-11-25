@@ -93,7 +93,22 @@ public partial class App : Application
         {
             try
             {
-                RunOnceService.ApplyRecordedHiddenState(AppConfig.Load());
+                var onceConfig = AppConfig.Load();
+                var started = Environment.TickCount64;
+                var hidden = RunOnceService.ApplyRecordedHiddenState(onceConfig);
+
+                // 登录后很多程序还没起来：等到"统计里的记录全部隐藏完"再退出，
+                // 期间每 5 秒补一次，最多等 10 分钟，避免长期空转。
+                var deadline = started + 10 * 60_000L;
+                var pending = RunOnceService.CountPending(onceConfig);
+                while (pending > 0 && Environment.TickCount64 < deadline)
+                {
+                    Thread.Sleep(5000);
+                    hidden += RunOnceService.ApplyRecordedHiddenState(onceConfig);
+                    pending = RunOnceService.CountPending(onceConfig);
+                }
+
+                RunOnceService.WriteStats(onceConfig, hidden, pending, Environment.TickCount64 - started);
             }
             catch
             {

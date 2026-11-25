@@ -121,7 +121,7 @@ public sealed class AppConfig
     public bool RunOnceAndExit { get; set; }
 
     /// <summary>不常驻模式下补应用隐藏状态的间隔（分钟，1~15）。</summary>
-    public int RunOnceIntervalMinutes { get; set; } = 3;
+    public int RunOnceIntervalMinutes { get; set; } = 10;
 
     /// <summary>
     /// 旧版字段：唤出主窗口快捷键的修饰键。

@@ -728,6 +728,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         item.Icon = IconExtractor.FromExecutable(entry.ExecutablePath)
                     ?? IconExtractor.FromSnapshot(entry.SubKeyName);
 
+        item.PropertyChanged += OnItemPropertyChanged;
         Icons.Add(item);
         _iconsBySubKey[item.SubKeyName] = item;
         _sortDirty = true;
@@ -800,6 +801,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             item.Icon = IconExtractor.FromSnapshotBytes(backup.IconSnapshot);
         }
 
+        item.PropertyChanged += OnItemPropertyChanged;
         Icons.Add(item);
         _iconsBySubKey[subKeyName] = item;
         _sortDirty = true;
@@ -1826,6 +1828,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     // ---------------------------------------------------------------- 辅助
 
     public void UpdateCounters() => RunOnUiThread(UpdateCountersCore);
+
+    /// <summary>
+    /// 复选框是 TwoWay 绑定到 <see cref="TrayIconItem.IsSelected"/> 的，点击事件不参与，
+    /// 所以只能靠条目自身的属性通知来即时刷新"已选择 N 个"。
+    /// </summary>
+    private void OnItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(TrayIconItem.IsSelected)) return;
+        SelectedCount = Icons.Count(i => i.IsSelected);
+    }
 
     private void UpdateCountersCore()
     {
