@@ -585,7 +585,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Footer.Version]}"
+                    <TextBlock Text="{Binding FooterText, RelativeSource={RelativeSource AncestorType=Window}}"
                                Margin="2,22,0,0"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextTertiary}" />

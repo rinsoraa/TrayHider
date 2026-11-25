@@ -202,6 +202,7 @@ public partial class MainWindow : Window
             _clickTimers.Remove(item);
             item.IsSelected = !item.IsSelected;
             _trayViewModel.UpdateCounters();
+            _trayViewModel.UpdateCounters();
         };
         _clickTimers[item] = timer;
         timer.Start();
@@ -254,6 +255,7 @@ public partial class MainWindow : Window
             timer.Stop();
             _windowClickTimers.Remove(item);
             item.IsSelected = !item.IsSelected;
+            _trayViewModel.UpdateCounters();
             _windowViewModel.UpdateCounters();
         };
         _windowClickTimers[item] = timer;

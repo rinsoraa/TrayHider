@@ -115,11 +115,12 @@ internal static class RunOnceService
         {
             return RemoveSchedule() ? Loc.T("App.RunOnce.ScheduleRemoved") : Loc.T("App.RunOnce.ScheduleAbsent");
         }
-
-        var quotedExe = Quote(exe + " " + ApplyOnceArg);
-        var arguments = "/Create /TN " + Quote(TaskName) + " /TR " + Quote(quotedExe)
+        // 全程不用转义字面量：q = 引号，bs = 反斜杠
+        var q = ((char)34).ToString();
+        var bs = ((char)92).ToString();
+        var command = q + exe + q + " " + ApplyOnceArg;
+        var arguments = "/Create /TN " + q + TaskName + q + " /TR " + q + command.Replace(q, bs + q) + q
                         + " /SC MINUTE /MO " + config.RunOnceIntervalMinutes + " /F";
-
         if (!Run("schtasks.exe", arguments, out var error))
         {
             return Loc.T("App.RunOnce.ScheduleFail", error);

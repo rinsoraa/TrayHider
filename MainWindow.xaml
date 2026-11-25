@@ -138,17 +138,20 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
-                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <WrapPanel Grid.Column="0" Orientation="Horizontal">
                                 <Button Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.SelectAll]}" Style="{StaticResource StandardButton}"
                                         Click="SelectAll_Click" Margin="0,0,8,0" />
                                 <Button Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.Invert]}" Style="{StaticResource StandardButton}"
                                         Click="Invert_Click" Margin="0,0,8,0" />
                                 <Button Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.SelectNone]}" Style="{StaticResource StandardButton}"
                                         Click="ClearSelection_Click" />
-                            </StackPanel>
+                            </WrapPanel>
 
                             <TextBlock Grid.Column="1"
                                        Text="{Binding SelectionSummary}"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding SelectionSummary}"
+                                       Margin="8,0"
                                        VerticalAlignment="Center"
                                        HorizontalAlignment="Center"
                                        FontSize="{DynamicResource App.FontSize.Caption}"
@@ -343,17 +346,20 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
-                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <WrapPanel Grid.Column="0" Orientation="Horizontal">
                                 <Button Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.SelectAll]}" Style="{StaticResource StandardButton}"
                                         Click="WindowSelectAll_Click" Margin="0,0,8,0" />
                                 <Button Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.Invert]}" Style="{StaticResource StandardButton}"
                                         Click="WindowInvert_Click" Margin="0,0,8,0" />
                                 <Button Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.SelectNone]}" Style="{StaticResource StandardButton}"
                                         Click="WindowClearSelection_Click" />
-                            </StackPanel>
+                            </WrapPanel>
 
                             <TextBlock Grid.Column="1"
                                        Text="{Binding SelectionSummary}"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding SelectionSummary}"
+                                       Margin="8,0"
                                        VerticalAlignment="Center"
                                        HorizontalAlignment="Center"
                                        FontSize="{DynamicResource App.FontSize.Caption}"

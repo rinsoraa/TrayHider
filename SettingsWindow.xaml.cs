@@ -53,6 +53,17 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
 
     public string ConfigPathText => AppConfig.ConfigPath;
 
+    /// <summary>页脚版本号：取程序集版本，避免每次发版漏改文案。</summary>
+    public string FooterText
+    {
+        get
+        {
+            var version = typeof(SettingsWindow).Assembly.GetName().Version;
+            var text = version == null ? "v?" : $"v{version.Major}.{version.Minor}.{version.Build}";
+            return (Loc.CurrentLanguage == Loc.Chinese ? "托盘图标管家 " : "TrayHider ") + text;
+        }
+    }
+
     /// <summary>当前权限说明（设置页"权限与运行方式"里显示）。</summary>
     public string ElevationHint
     {
