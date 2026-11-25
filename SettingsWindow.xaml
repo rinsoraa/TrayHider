@@ -13,6 +13,119 @@
         UseLayoutRounding="True"
         WindowStyle="None">
 
+    <Window.Resources>
+        <!-- 语言下拉：应用内样式（系统默认弹层与页面其它控件风格不一致） -->
+        <Style x:Key="AppComboBoxItem" TargetType="ComboBoxItem">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="{DynamicResource App.FontSize.Caption}" />
+            <Setter Property="Foreground" Value="{DynamicResource App.TextPrimary}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemRoot"
+                                Background="Transparent"
+                                CornerRadius="4"
+                                Margin="4,1"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource App.ControlFillHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource App.ControlFillPressed}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AppComboBox" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource App.TextPrimary}" />
+            <Setter Property="FontSize" Value="{DynamicResource App.FontSize.Body}" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource AppComboBoxItem}" />
+            <Setter Property="MaxDropDownHeight" Value="240" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="Root">
+                            <ToggleButton x:Name="Toggle"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Chrome"
+                                                Background="{DynamicResource App.ControlFill}"
+                                                BorderBrush="{DynamicResource App.Border}"
+                                                BorderThickness="1"
+                                                CornerRadius="6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource App.ControlFillHover}" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter x:Name="SelectionPresenter"
+                                              IsHitTestVisible="False"
+                                              Margin="10,0,28,0"
+                                              VerticalAlignment="Center"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
+
+                            <Path x:Name="Arrow"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  Data="M 0 0 L 4 4 L 8 0"
+                                  Stroke="{DynamicResource App.TextSecondary}"
+                                  StrokeThickness="1.4"
+                                  IsHitTestVisible="False" />
+
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Placement="Bottom"
+                                   PopupAnimation="Fade"
+                                   StaysOpen="False"
+                                   Focusable="False">
+                                <Border Background="{DynamicResource App.ControlFill}"
+                                        BorderBrush="{DynamicResource App.Border}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Margin="0,4,0,0"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,4">
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Border Background="{DynamicResource App.Background}">
         <Grid>
             <Grid.RowDefinitions>
@@ -220,7 +333,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Title]}" />
+                                    <!-- 标题固定显示中英两种文字，说明文字仍随语言本地化 -->
+                                    <TextBlock Text="语言 / Language" />
                                     <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
@@ -229,7 +343,9 @@
                                 </StackPanel>
                                 <ComboBox x:Name="LanguageCombo"
                                           Grid.Column="1"
-                                          Width="168"
+                                          Width="180"
+                                          Style="{StaticResource AppComboBox}"
+                                          ToolTip="{Binding SelectedLanguage.Label, RelativeSource={RelativeSource AncestorType=Window}}"
                                           VerticalAlignment="Center"
                                           ItemsSource="{Binding LanguageOptions, RelativeSource={RelativeSource AncestorType=Window}}"
                                           DisplayMemberPath="Label"
@@ -239,9 +355,8 @@
 
                             <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,14,0,14" />
 
-                            <!-- 隐藏图标后退出（不常驻）：功能已实现，但本机端到端验证未通过（置位后图标仍显示），
-                                 在验证通过前不向用户暴露，避免"以为隐藏了其实没有"。 -->
-                            <Grid Visibility="Collapsed">
+                            <!-- 隐藏图标后退出（不常驻）：v1.2.3 起端到端验证通过（隐藏生效 + 进程退出 + 计划任务补应用）。 -->
+                            <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
@@ -256,6 +371,7 @@
                                 </StackPanel>
                                 <CheckBox x:Name="RunOnceToggle"
                                           Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
                                           VerticalAlignment="Center"
                                           IsChecked="{Binding RunOnceEnabled, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
                             </Grid>
@@ -286,7 +402,9 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding Title}" />
+                                            <TextBlock Text="{Binding Title}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Title}" />
                                             <TextBlock Text="{Binding Description}"
                                                        Margin="0,3,0,0"
                                                        TextWrapping="Wrap"
@@ -304,13 +422,17 @@
                                                 VerticalAlignment="Center">
                                             <TextBlock Text="{Binding Text}"
                                                        FontFamily="Consolas"
-                                                       FontSize="{DynamicResource App.FontSize.Caption}" />
+                                                       FontSize="{DynamicResource App.FontSize.Caption}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="200"
+                                                       ToolTip="{Binding Text}" />
                                         </Border>
 
                                         <Button Grid.Column="2"
                                                 Content="×"
                                                 Style="{StaticResource StandardButton}"
                                                 MinWidth="30"
+                                                Width="30"
                                                 Padding="8,3"
                                                 Margin="0,0,8,0"
                                                 ToolTip="{Binding ClearTip}"
@@ -321,7 +443,8 @@
                                         <Button Grid.Column="3"
                                                 Content="{Binding ButtonText}"
                                                 Style="{StaticResource StandardButton}"
-                                                MinWidth="96"
+                                                MinWidth="150"
+                                                Padding="10,3"
                                                 VerticalAlignment="Center"
                                                 Click="HotkeyRow_Click" />
                                     </Grid>

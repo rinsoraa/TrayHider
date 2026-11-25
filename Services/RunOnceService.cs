@@ -67,12 +67,17 @@ internal static class RunOnceService
                 continue;
             }
 
-            // 置位后要确认真的从通知区域消失，否则清回去，避免留下半吊子状态
-            if (wasDisplayed && TrayIconController.IsIconDisplayed(hwnd, identity))
+            // 置位后要确认真的从通知区域消失。跨进程置位后 Shell 的刷新不是瞬时的，
+            // 短暂轮询（最多约 1 秒）再做结论；确实没消失才回滚并重试一次。
+            if (wasDisplayed && WaitUntilHidden(hwnd, identity, 1000) == false)
             {
-                TrayIconController.TryShowByState(hwnd, identity);
-                log?.Invoke(processName + ": 状态位已置但图标仍在显示，已回滚");
-                continue;
+                TrayIconController.TryHideByState(hwnd, identity);
+                if (WaitUntilHidden(hwnd, identity, 600) == false)
+                {
+                    TrayIconController.TryShowByState(hwnd, identity);
+                    log?.Invoke(processName + ": 状态位已置但图标仍在显示，已回滚");
+                    continue;
+                }
             }
 
             hidden++;
@@ -135,6 +140,19 @@ internal static class RunOnceService
 
     /// <summary>给命令行参数加引号（schtasks 的 /TR 里还要再套一层）。</summary>
     private static string Quote(string text) => "\\" + text + "\\";
+
+    /// <summary>轮询等待图标从通知区域消失；超时返回 false。</summary>
+    private static bool WaitUntilHidden(IntPtr hwnd, TrayIconIdentity identity, int timeoutMs)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (!TrayIconController.IsIconDisplayed(hwnd, identity)) return true;
+            Thread.Sleep(50);
+        }
+
+        return !TrayIconController.IsIconDisplayed(hwnd, identity);
+    }
 
     /// <summary>在该进程的全部窗口里找"这个图标正在显示"的那一个（GetRect 精确判定）。</summary>
     private static IntPtr FindDisplayedWindow(string processName, TrayIconIdentity identity, Action<string>? log)
