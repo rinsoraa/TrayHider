@@ -41,6 +41,63 @@ public partial class SettingsWindow : Window
 
     public string ConfigPathText => AppConfig.ConfigPath;
 
+    /// <summary>当前权限说明（设置页"权限与运行方式"里显示）。</summary>
+    public string ElevationHint
+    {
+        get
+        {
+            var app = (App)System.Windows.Application.Current;
+            if (app.IsElevated)
+            {
+                return "已以管理员身份运行：可以管理以管理员权限运行的程序（含它们的托盘图标恢复与窗口隐藏）。";
+            }
+
+            return "当前为普通权限。以管理员权限运行的程序（例如部分安全软件、驱动服务）"
+                 + "其托盘图标被隐藏后可能无法恢复正常点击响应，也无法隐藏它的窗口；"
+                 + "需要时请用右侧按钮以管理员身份重启。";
+        }
+    }
+
+    private void RelaunchElevated_Click(object sender, RoutedEventArgs e)
+    {
+        var app = (App)System.Windows.Application.Current;
+        if (app.IsElevated)
+        {
+            MessageBox.Show(this, "当前已经是管理员权限，无需重复启动。", "托盘图标管家",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var result = MessageBox.Show(this,
+            "将以管理员身份重新启动托盘图标管家。\n\n" +
+            "当前已隐藏的托盘图标会保持隐藏（配置不变），被隐藏的窗口会在退出时恢复，重启后可用设置里的『恢复所有被隐藏的图标』再次接管。\n\n继续吗？",
+            "以管理员身份重启",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (result != MessageBoxResult.Yes) return;
+
+        Close();
+        if (!app.RelaunchAsAdministrator())
+        {
+            MessageBox.Show(this, "提权被取消或失败，程序保持普通权限运行。", "托盘图标管家",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void RepairDegraded_Click(object sender, RoutedEventArgs e)
+    {
+        var repaired = _viewModel.RetryDegradedIcons();
+        MessageBox.Show(this,
+            repaired > 0
+                ? $"已修复 {repaired} 个图标的右键菜单。"
+                : "没有需要修复的图标。\n\n如果某个图标仍然左右键无反应，说明该程序不响应系统的托盘重建，" +
+                  "此时重启该程序（或重启资源管理器）即可恢复。",
+            "托盘图标管家",
+            MessageBoxButton.OK,
+            repaired > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
     // ---------------------------------------------------------------- 快捷键
 
     private void BuildHotkeyRows()

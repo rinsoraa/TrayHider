@@ -31,7 +31,7 @@ internal sealed class HiddenWindow
     /// <summary>本窗口专属的托盘图标（左键单击恢复该窗口）。</summary>
     public Forms.NotifyIcon? TrayIcon { get; set; }
 
-    /// <summary>托盘图标的右键菜单。NotifyIcon 不负责释放它，必须自己 Dispose。</summary>
+    /// <summary>托盘图标的右键菜单。NotifyIcon 与 WinForms 都不负责释放它，必须由本服务 Dispose。</summary>
     public Forms.ContextMenuStrip? TrayMenu { get; set; }
 
     /// <summary>需要由本服务释放的图标（从窗口图标复制 / 从可执行文件提取的那一份）。</summary>
@@ -47,6 +47,9 @@ internal sealed class HiddenWindow
 /// 设计要点：
 ///   · 集合以窗口句柄为键，重复隐藏不会产生第二个图标；
 ///   · 托盘图标的创建/销毁全部收口在这里，Dispose 之后不残留任何悬挂引用；
+///   · 先建托盘图标再隐藏窗口：图标建不出来就放弃隐藏，绝不让用户失去恢复入口；
+///   · 右键菜单沿用 NotifyIcon.ContextMenuStrip 的默认弹出路径（与 App 自身托盘菜单保持同一口径），
+///     只在 Opening 时做光标兜底，见 CreateTrayIcon 里的说明；
 ///   · 托盘图标的点击与右键菜单只抛事件（RestoreRequested / CloseRequested / RestoreAllRequested），
 ///     真正的恢复动作（含"把该程序的托盘图标还回去"）由视图模型统一编排。
 /// </summary>
@@ -78,8 +81,13 @@ internal sealed class WindowHiderService : IDisposable
     // ---------------------------------------------------------------- 隐藏 / 恢复
 
     /// <summary>
-    /// 隐藏一个顶层窗口：记录位置/状态 → ShowWindowAsync(SW_HIDE) → 创建专属托盘图标。
+    /// 隐藏一个顶层窗口：记录位置/状态 → 创建专属托盘图标 → ShowWindowAsync(SW_HIDE)。
     /// 不结束进程，也不修改目标程序的任何文件。
+    ///
+    /// 顺序说明：**先建托盘图标、再隐藏窗口**。托盘图标是用户唯一"看得见"的恢复入口，
+    /// 一旦它创建失败就绝不能把窗口藏起来（否则用户会以为程序被关掉了）；
+    /// 反过来，图标建好后窗口却隐藏失败时，把图标销毁、窗口保持原样，_hidden 集合不写入，
+    /// 三者的状态始终一致。返回 false 时保证窗口仍可见 / 仍保持原状态。
     /// </summary>
     public bool Hide(IntPtr hwnd, string title, string processName, string executablePath, int processId)
     {
@@ -87,7 +95,6 @@ internal sealed class WindowHiderService : IDisposable
         if (_hidden.ContainsKey(hwnd)) return true;
 
         var placement = WindowController.GetPlacement(hwnd);
-        if (!WindowController.Hide(hwnd)) return false;
 
         var record = new HiddenWindow
         {
@@ -99,7 +106,20 @@ internal sealed class WindowHiderService : IDisposable
             Placement = placement
         };
 
-        CreateTrayIcon(record);
+        // 没有恢复入口就不隐藏：托盘图标建不出来直接放弃，窗口保持原样
+        if (!CreateTrayIcon(record))
+        {
+            DisposeTrayIcon(record);
+            return false;
+        }
+
+        if (!WindowController.Hide(hwnd))
+        {
+            // 窗口其实没被藏起来（例如查询与隐藏之间被关闭 / 被别的程序最小化）→ 撤掉刚建的图标
+            DisposeTrayIcon(record);
+            return false;
+        }
+
         _hidden[hwnd] = record;
         return true;
     }
@@ -163,7 +183,18 @@ internal sealed class WindowHiderService : IDisposable
 
     // ---------------------------------------------------------------- 托盘图标
 
-    private void CreateTrayIcon(HiddenWindow record)
+    /// <summary>
+    /// 为被隐藏的窗口创建专属托盘图标。
+    ///
+    /// 返回是否创建成功 —— 失败时调用方（<see cref="Hide"/>）必须放弃隐藏，
+    /// 否则窗口会处于"看不见又找不到"的状态。失败时不做清理，由调用方统一 DisposeTrayIcon，
+    /// 这样记录里已经挂上的半成品（图标 / 菜单 / Icon）不会泄漏。
+    ///
+    /// 右键菜单保持 NotifyIcon.ContextMenuStrip 的默认弹出路径（与 App 自身托盘菜单一致）：
+    /// WinForms 用弹出瞬间的光标位置定位菜单，这里只在 Opening 做一次光标兜底，
+    /// 光标坐标不可信时不至于把菜单丢到屏幕角落。
+    /// </summary>
+    private bool CreateTrayIcon(HiddenWindow record)
     {
         try
         {
@@ -176,34 +207,79 @@ internal sealed class WindowHiderService : IDisposable
             if (tooltip.Length > 60) tooltip = tooltip.Substring(0, 60) + "...";
 
             var hwnd = record.Hwnd;
-            var menu = new Forms.ContextMenuStrip();
+            var menu = new Forms.ContextMenuStrip
+            {
+                ShowImageMargin = false,
+                ShowCheckMargin = false
+            };
             menu.Items.Add("显示窗口", null, (_, _) => RestoreRequested?.Invoke(this, hwnd));
             menu.Items.Add("关闭窗口", null, (_, _) => CloseRequested?.Invoke(this, hwnd));
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("显示全部窗口", null, (_, _) => RestoreAllRequested?.Invoke(this, EventArgs.Empty));
 
+            // 菜单位置兜底：WinForms 弹出菜单时用当前光标位置定位；
+            // 万一这一刻光标坐标不可信（例如由键盘 / 自动化触发，或多屏坐标异常），
+            // 把光标拉回主屏工作区右下角，避免菜单出现在屏幕角落之类的"错误位置"。
+            menu.Opening += (_, _) =>
+            {
+                var point = Forms.Cursor.Position;
+                if (!IsPointOnAnyScreen(point))
+                {
+                    Forms.Cursor.Position = DefaultTrayMenuPoint();
+                }
+            };
+
             var notifyIcon = new Forms.NotifyIcon
             {
                 Text = tooltip,
                 Icon = icon,
-                ContextMenuStrip = menu,
-                Visible = true
+                ContextMenuStrip = menu
             };
 
-            // 左键单击与双击都直接恢复窗口（双击时先收到一次单击，恢复是幂等的）
+            record.TrayIcon = notifyIcon;
+            record.TrayMenu = menu;
+
+            // 左键单击 / 双击恢复窗口；右键交给 ContextMenuStrip 自动弹菜单，不触发恢复
             notifyIcon.MouseClick += (_, e) =>
             {
                 if (e.Button == Forms.MouseButtons.Left) RestoreRequested?.Invoke(this, hwnd);
             };
             notifyIcon.DoubleClick += (_, _) => RestoreRequested?.Invoke(this, hwnd);
 
-            record.TrayIcon = notifyIcon;
-            record.TrayMenu = menu;
+            notifyIcon.Visible = true;
+            return true;
         }
         catch
         {
-            // 托盘图标创建失败不影响窗口隐藏本身，只是少一个恢复入口（列表里仍可恢复）
+            // 半成品由调用方 DisposeTrayIcon 清理
+            return false;
         }
+    }
+
+    /// <summary>坐标是否落在任一屏幕范围内（用于判断拿到的光标位置是否可信）。</summary>
+    private static bool IsPointOnAnyScreen(Point point)
+    {
+        try
+        {
+            foreach (var screen in Forms.Screen.AllScreens)
+            {
+                if (screen.Bounds.Contains(point)) return true;
+            }
+        }
+        catch
+        {
+            // 枚举屏幕失败时按"在屏幕内"处理，不要无谓地跳到角落
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>光标坐标不可信时的兜底菜单位置：主屏工作区右下角（任务栏托盘一侧）。</summary>
+    private static Point DefaultTrayMenuPoint()
+    {
+        var workArea = Forms.Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1024, 768);
+        return new Point(workArea.Right - 12, workArea.Bottom - 12);
     }
 
     private static void DisposeTrayIcon(HiddenWindow record)
@@ -226,6 +302,9 @@ internal sealed class WindowHiderService : IDisposable
         {
             if (record.TrayMenu != null)
             {
+                // 菜单可能正开着（用户点了菜单项 → 恢复窗口 → 这里销毁）：
+                // 先关掉再释放，避免在 ToolStrip 自己的消息处理过程中销毁可见窗口。
+                if (record.TrayMenu.Visible) record.TrayMenu.Close();
                 record.TrayMenu.Dispose();
                 record.TrayMenu = null;
             }

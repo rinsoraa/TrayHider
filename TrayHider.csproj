@@ -18,7 +18,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Product>托盘图标管家</Product>
     <AssemblyTitle>托盘图标管家</AssemblyTitle>
     <Company>TrayHider</Company>

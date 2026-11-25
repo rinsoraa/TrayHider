@@ -41,6 +41,21 @@ public partial class MainWindow : Window
         // 快捷键打到本软件自己的窗口上时，把主窗口收到托盘
         _windowViewModel.HideSelfRequested += (_, _) => MinimizeToTray();
 
+        // 隐藏"已知不支持托盘重建"的程序之前先确认一次：
+        // 这类程序的图标隐藏后再显示，左右键会点不动（本软件只能伪造注册，回调是假的）。
+        _trayViewModel.ConfirmHideUnsupported = item =>
+        {
+            var result = System.Windows.MessageBox.Show(this,
+                $"「{item.DisplayName}」这个程序不支持系统托盘重建：把它的图标隐藏后再显示，"
+                + "图标会回来，但左右键都点不动。\n\n"
+                + "如果恢复后出现这种情况，重启该程序（或重启资源管理器）即可恢复。\n\n仍然要隐藏吗？",
+                "该程序不支持托盘重建",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            return result == MessageBoxResult.Yes;
+        };
+
         // 列表条目被移除时清理残留的单击延时定时器，避免字典无限增长
         _trayViewModel.Icons.CollectionChanged += (_, _) => PruneClickTimers();
         _windowViewModel.Windows.CollectionChanged += (_, _) => PruneWindowClickTimers();

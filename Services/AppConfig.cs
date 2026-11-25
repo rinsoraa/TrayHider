@@ -131,6 +131,15 @@ public sealed class AppConfig
     /// <summary>窗口列表的刷新间隔（毫秒）。</summary>
     public int WindowRefreshIntervalMs { get; set; } = 3000;
 
+    /// <summary>
+    /// 已知"不响应系统托盘重建"的程序（进程名，不含 .exe）。
+    ///
+    /// 这类程序的图标被隐藏后，再显示时只能由本软件伪造注册，表现为"图标回来了但左右键都没反应"。
+    /// 本集合在恢复失败时自动学习（并落盘），下次隐藏同一个程序时先给出明确确认，
+    /// 避免用户以为程序坏了；后续恢复成功会自动把它移出集合。
+    /// </summary>
+    public List<string> RebuildUnsupported { get; set; } = new();
+
     // ---------------------------------------------------------------- 读写
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -211,6 +220,16 @@ public sealed class AppConfig
     {
         HiddenKeys ??= new List<string>();
         HiddenBackups ??= new Dictionary<string, TrayIconEntry>();
+        RebuildUnsupported ??= new List<string>();
+
+        // 进程名归一化（去 .exe、去空白），保证学习记录能命中
+        for (var i = 0; i < RebuildUnsupported.Count; i++)
+        {
+            var name = (RebuildUnsupported[i] ?? string.Empty).Trim();
+            if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
+            RebuildUnsupported[i] = name;
+        }
+        RebuildUnsupported.RemoveAll(string.IsNullOrEmpty);
 
         // ---- 快捷键：旧版单快捷键 → 多动作表（向后兼容，旧配置的自定义快捷键不会丢）----
         var legacyModifiers = HotkeyModifiers & ~0x4000;

@@ -80,6 +80,17 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
+    /// <summary>
+    /// 发送窗口消息并等待对端处理结果。用于"请已运行的实例把主窗口唤出来"这类需要回执的跨进程通知：
+    /// 对端在 WndProc 里处理并返回一个魔数，发送方据此判断"真的有人接管了"，
+    /// 而不是盲目退出（也就不用回退到"已经在运行中"的提示框）。
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    internal const uint SMTO_ABORTIFHUNG = 0x0002;
+
     // ---------------------------------------------------------------- 全局热键
 
     [DllImport("user32.dll", SetLastError = true)]
