@@ -64,7 +64,7 @@ public sealed class HotkeyRowViewModel : INotifyPropertyChanged
         }
     }
 
-    public string ButtonText => IsRecording ? "请按下新快捷键…" : "修改";
+    public string ButtonText => IsRecording ? Loc.T("Hotkey.Button.Recording") : Loc.T("Hotkey.Button.Edit");
 
     /// <summary>用新的可读文本刷新一行（同时结束录制状态）。</summary>
     public void UpdateText(string text)
@@ -74,8 +74,13 @@ public sealed class HotkeyRowViewModel : INotifyPropertyChanged
         IsRecording = false;
     }
 
+    /// <summary>
+    /// 判断"未设置"。除了当前语言下的文案，也要认产品侧 <c>HotkeyBinding.ToString()</c> 里的 0/0 哨兵原文，
+    /// 否则英文界面下清空后「×」按钮会重新冒出来。
+    /// </summary>
     private static bool IsUnassignedText(string? text)
-        => string.Equals(text, HotkeyCatalog.UnassignedText, StringComparison.Ordinal);
+        => string.Equals(text, HotkeyCatalog.UnassignedText, StringComparison.Ordinal)
+           || string.Equals(text, "未设置", StringComparison.Ordinal);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

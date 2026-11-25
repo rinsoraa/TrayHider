@@ -12,6 +12,14 @@ internal static class StartupManager
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "TrayHider";
 
+    /// <summary>
+    /// 自启动命令行参数提供者。不常驻模式需要写 --apply-once 而不是 --minimized，
+    /// 由 App 在启动时接上（避免这里反向依赖 AppConfig）。
+    /// </summary>
+    public static Func<string>? ArgumentsProvider { get; set; }
+
+    private static string Arguments => ArgumentsProvider?.Invoke() ?? "--minimized";
+
     public static bool IsEnabled()
     {
         try
@@ -37,7 +45,7 @@ internal static class StartupManager
             {
                 var exe = GetExecutablePath();
                 if (string.IsNullOrEmpty(exe)) return false;
-                key.SetValue(ValueName, $"\"{exe}\" --minimized", RegistryValueKind.String);
+                key.SetValue(ValueName, $"\"{exe}\" {Arguments}", RegistryValueKind.String);
             }
             else
             {

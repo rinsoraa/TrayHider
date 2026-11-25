@@ -50,8 +50,14 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
     private bool _isWindowVisible;
     private bool _hasInitialRefresh;
     private bool _disposed;
-    private string _statusText = "就绪";
+    private string _statusText = string.Empty;
     private int _selectedCount;
+
+    /// <summary>
+    /// 生成"上一句状态栏文案"的工厂：状态栏是操作结果，语言切换时靠它重新求值，
+    /// 而不是重读字段（<see cref="RefreshLocalizedTexts"/>）。
+    /// </summary>
+    private Func<string>? _statusFactory;
 
     /// <summary>最近一次由快捷键隐藏的窗口句柄，用于"再按一次快捷键 = 恢复"。</summary>
     private IntPtr _lastHiddenHwnd;
@@ -63,6 +69,11 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
     {
         _config = config;
         _trayViewModel = trayViewModel;
+
+        // 文案本地化：按配置里的语言偏好加载（幂等；App 之后再次 ApplyLanguage 不会重复触发）
+        Loc.ApplyLanguage(_config.Language);
+        Loc.LanguageChanged += OnLanguageChanged;
+        SetStatus(() => Loc.T("Core.Status.Ready"));
 
         // 托盘图标的点击/右键只抛事件，具体动作由本视图模型统一编排
         _hider.RestoreRequested += (_, hwnd) => RestoreHiddenWindow(hwnd);
@@ -114,8 +125,8 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>勾选摘要文案。</summary>
     public string SelectionSummary => _selectedCount == 0
-        ? "未选择任何窗口"
-        : "已选择 " + _selectedCount + " 个窗口";
+        ? Loc.T("Core.Window.Selection.None")
+        : Loc.T("Core.Window.Selection.Summary", _selectedCount);
 
     /// <summary>当前被隐藏到托盘的窗口数。</summary>
     public int HiddenWindowCount => _hider.Count;
@@ -124,7 +135,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
     public bool HasWindows => Windows.Count > 0;
 
     /// <summary>空状态提示。</summary>
-    public string EmptyHint => "未发现可隐藏的窗口。\n请先打开其它程序的窗口（桌面、任务栏与本软件自身不会出现在列表里）。";
+    public string EmptyHint => Loc.T("Core.Window.Empty");
 
     /// <summary>隐藏窗口时是否一并隐藏该程序原本的托盘图标。</summary>
     public bool HideAppTrayIconWithWindow
@@ -160,9 +171,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
             var toggle = _config.GetHotkey(HotkeyActions.ToggleHideWindow);
             var hideAll = _config.GetHotkey(HotkeyActions.HideAllWindows);
             var restoreAll = _config.GetHotkey(HotkeyActions.RestoreAllWindows);
-            return "快捷键：" + toggle + " 隐藏/恢复当前窗口 · "
-                   + hideAll + " 隐藏全部 · "
-                   + restoreAll + " 恢复全部";
+            return Loc.T("Core.Window.HotkeyHint", toggle, hideAll, restoreAll);
         }
     }
 
@@ -237,7 +246,8 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         var removed = PruneHiddenWindows();
         if (removed > 0)
         {
-            StatusText = "有 " + removed + " 个隐藏窗口已自行关闭，托盘图标已清理";
+            var removedCount = removed;
+            SetStatus(() => Loc.T("Core.Window.ExitedCleaned", removedCount));
         }
     }
 
@@ -285,14 +295,16 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
             ApplyOrder();
             UpdateCounters();
-            StatusText = failedHides == 0
-                ? BuildStatusText()
-                : "有 " + failedHides + " 个窗口隐藏失败（目标程序可能以管理员权限运行），"
-                  + _hider.Count + " 个已隐藏到托盘的窗口列表见下";
+            var failedCount = failedHides;
+            var hiddenCount = _hider.Count;
+            SetStatus(() => failedCount == 0
+                ? Loc.T("Core.Window.Summary", Windows.Count, _hider.Count)
+                : Loc.T("Core.Window.HideFailedSummary", failedCount, hiddenCount));
         }
         catch (Exception ex)
         {
-            StatusText = "刷新窗口列表失败：" + ex.Message;
+            var refreshError = ex.Message;
+            SetStatus(() => Loc.T("Core.Window.RefreshFailed", refreshError));
         }
         finally
         {
@@ -300,9 +312,6 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
             _isRefreshing = false;
         }
     }
-
-    private string BuildStatusText() => "共 " + Windows.Count + " 个可隐藏窗口，其中 "
-                                        + _hider.Count + " 个已隐藏到托盘";
 
     /// <summary>新增或更新一个"当前可见"的窗口条目。</summary>
     private void UpsertWindow(WindowDescriptor descriptor)
@@ -454,16 +463,16 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         var targets = Windows.Where(window => window.IsSelected && !window.IsHidden).ToList();
         if (targets.Count == 0)
         {
-            StatusText = "请先勾选要隐藏的窗口";
+            SetStatus(() => Loc.T("Core.Window.Hide.SelectFirst"));
             return;
         }
 
         var success = HideWindows(targets);
         UpdateCounters();
         ApplyOrder();
-        StatusText = success == 0
-            ? "隐藏失败：请确认目标窗口没有以管理员权限运行"
-            : "已隐藏 " + success + " 个窗口，对应程序仍在后台运行；点击托盘里各自的图标即可恢复";
+        SetStatus(() => success == 0
+            ? Loc.T("Core.Window.Hide.AdminHint")
+            : Loc.T("Core.Window.Hide.Selected", success));
     }
 
     /// <summary>恢复当前勾选的已隐藏窗口。</summary>
@@ -472,7 +481,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         var targets = Windows.Where(window => window.IsSelected && window.IsHidden).ToList();
         if (targets.Count == 0)
         {
-            StatusText = "请先勾选要恢复的窗口";
+            SetStatus(() => Loc.T("Core.Window.Restore.SelectFirst"));
             return;
         }
 
@@ -484,7 +493,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
         UpdateCounters();
         ApplyOrder();
-        StatusText = "已恢复 " + success + " 个窗口";
+        SetStatus(() => Loc.T("Core.Window.Restore.Selected", success));
     }
 
     /// <summary>隐藏列表中全部未隐藏的窗口。</summary>
@@ -497,14 +506,14 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         var targets = Windows.Where(window => !window.IsHidden).ToList();
         if (targets.Count == 0)
         {
-            StatusText = "所有窗口都已处于隐藏状态";
+            SetStatus(() => Loc.T("Core.Window.Hide.AllAlreadyHidden"));
             return;
         }
 
         var success = HideWindows(targets);
         UpdateCounters();
         ApplyOrder();
-        StatusText = "已隐藏全部 " + success + " 个窗口";
+        SetStatus(() => Loc.T("Core.Window.Hide.All", success));
     }
 
     /// <summary>恢复全部被隐藏的窗口。</summary>
@@ -512,7 +521,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
     {
         if (_hider.Count == 0)
         {
-            StatusText = "当前没有被隐藏的窗口";
+            SetStatus(() => Loc.T("Core.Window.Restore.NothingHidden"));
             return;
         }
 
@@ -527,7 +536,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
         UpdateCounters();
         ApplyOrder();
-        StatusText = "已恢复 " + restored + " 个窗口";
+        SetStatus(() => Loc.T("Core.Window.Restore.Selected", restored));
     }
 
     /// <summary>切换单个窗口的隐藏状态（列表行双击）。</summary>
@@ -570,7 +579,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
             && WindowController.IsOwnProcessWindow(foreground))
         {
             HideSelfRequested?.Invoke(this, EventArgs.Empty);
-            StatusText = "已把主窗口收到托盘，可用快捷键唤出";
+            SetStatus(() => Loc.T("Core.Window.Self.MinimizedToTray"));
             return;
         }
 
@@ -596,7 +605,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         // 4) 前台不可隐藏：退回到"恢复最近隐藏的窗口"
         if (RestoreLastHiddenWindow()) return;
 
-        StatusText = "当前没有可隐藏的窗口";
+        SetStatus(() => Loc.T("Core.Window.Hide.NothingAvailable"));
     }
 
     /// <summary>
@@ -619,7 +628,8 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         {
             _lastHiddenHwnd = item.Hwnd;
             _lastHiddenTick = Environment.TickCount64;
-            StatusText = "已隐藏「" + item.Title + "」，再按一次快捷键即可恢复";
+            var hiddenTitle = item.Title;
+            SetStatus(() => Loc.T("Core.Window.Hide.One", hiddenTitle));
         }
 
         UpdateCounters();
@@ -694,13 +704,15 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
         if (!WindowController.IsWindowAlive(item.Hwnd))
         {
-            StatusText = "「" + item.Title + "」已经不存在了";
+            var goneTitle = item.Title;
+            SetStatus(() => Loc.T("Core.Window.Gone", goneTitle));
             return false;
         }
 
         if (!_hider.Hide(item.Hwnd, item.Title, item.ProcessName, item.ExecutablePath, item.ProcessId))
         {
-            StatusText = "隐藏「" + item.Title + "」失败：目标窗口可能以管理员权限运行";
+            var failedTitle = item.Title;
+            SetStatus(() => Loc.T("Core.Window.Hide.FailedElevated", failedTitle));
             return false;
         }
 
@@ -724,7 +736,8 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
         if (!restored)
         {
-            StatusText = "恢复「" + item.Title + "」失败：窗口可能已经关闭";
+            var restoreTitle = item.Title;
+            SetStatus(() => Loc.T("Core.Window.Restore.Failed", restoreTitle));
         }
 
         return restored;
@@ -750,9 +763,9 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
         UpdateCounters();
         ApplyOrder();
-        StatusText = restored
-            ? "已恢复「" + title + "」"
-            : "恢复「" + title + "」失败：窗口可能已经关闭";
+        SetStatus(() => restored
+            ? Loc.T("Core.Window.Restore.One", title)
+            : Loc.T("Core.Window.Restore.Failed", title));
     }
 
     /// <summary>
@@ -778,9 +791,9 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
         UpdateCounters();
         ApplyOrder();
-        StatusText = WindowController.CloseWindow(hwnd)
-            ? "已关闭「" + title + "」"
-            : "关闭「" + title + "」失败：窗口可能已经关闭";
+        SetStatus(() => WindowController.CloseWindow(hwnd)
+            ? Loc.T("Core.Window.Close.One", title)
+            : Loc.T("Core.Window.Close.Failed", title));
     }
 
     // ---------------------------------------------------------------- 托盘图标联动
@@ -866,6 +879,45 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(HasWindows));
     }
 
+    // ---------------------------------------------------------------- 文案（本地化）
+
+    /// <summary>写入状态栏文案，并记下生成方式，便于语言切换后重新求值。</summary>
+    private void SetStatus(Func<string> factory)
+    {
+        _statusFactory = factory;
+        StatusText = factory();
+    }
+
+    /// <summary>语言切换：重新生成本地化文案并刷新派生属性。</summary>
+    private void OnLanguageChanged(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+
+        if (Application.Current?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(RefreshLocalizedTexts));
+            return;
+        }
+
+        RefreshLocalizedTexts();
+    }
+
+    private void RefreshLocalizedTexts()
+    {
+        if (_disposed) return;
+
+        StatusText = _statusFactory?.Invoke() ?? Loc.T("Core.Status.Ready");
+
+        OnPropertyChanged(nameof(EmptyHint));
+        OnPropertyChanged(nameof(SelectionSummary));
+        OnPropertyChanged(nameof(HotkeyHintText));
+
+        foreach (var item in Windows)
+        {
+            item.RaiseLocalizedChanged();
+        }
+    }
+
     // ---------------------------------------------------------------- 退出
 
     /// <summary>
@@ -888,7 +940,8 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
 
             RestoreAllTrayIcons();
             UpdateCounters();
-            StatusText = "退出前已恢复 " + restored + " 个被隐藏的窗口";
+            var restoredCount = restored;
+            SetStatus(() => Loc.T("Core.Window.ExitRestored", restoredCount));
         }
         catch
         {
@@ -901,6 +954,7 @@ public sealed class WindowListViewModel : INotifyPropertyChanged, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Loc.LanguageChanged -= OnLanguageChanged;
 
         try
         {

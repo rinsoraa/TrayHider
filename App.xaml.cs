@@ -84,6 +84,23 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // ---- 不常驻模式（计划任务 / 开机自启调用）：只应用一次隐藏状态就退出 ----
+        // 不建主窗口、不建托盘图标、不注册快捷键、不抢单实例互斥体，几百毫秒内结束。
+        if (e.Args.Any(a => string.Equals(a, RunOnceService.ApplyOnceArg, StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                RunOnceService.ApplyRecordedHiddenState(AppConfig.Load());
+            }
+            catch
+            {
+                // 静默失败：下一次计划任务会重试，不打扰用户
+            }
+
+            Shutdown(0);
+            return;
+        }
+
         // ---- 单实例检查：第二次启动不再弹提示框，而是把已运行的那个实例的主窗口唤出来 ----
         _mutex = TryAcquireInstanceMutex(e.Args, out var isFirstInstance);
         if (!isFirstInstance)
@@ -93,10 +110,8 @@ public partial class App : Application
                 // 两条通道都没能唤出已运行的实例：通常是"正在运行的是旧版本"（它不认识唤出请求），
                 // 或者是跨权限级别（提权/非提权）导致消息与事件都被拦下。
                 MessageBox.Show(
-                    "托盘图标管家已经在运行中（可能还是旧版本）。\n\n"
-                    + "· 如果托盘里有它的图标：右键 → 「退出」，再重新打开新版本；\n"
-                    + "· 如果图标被隐藏了：用全局快捷键唤出主窗口，在设置页退出后再打开新版本。",
-                    "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Information);
+                    Loc.T("App.AlreadyRunning"),
+                    Loc.T("App.Title"), MessageBoxButton.OK, MessageBoxImage.Information);
             }
 
             Shutdown();
@@ -109,6 +124,20 @@ public partial class App : Application
         CreateActivateEvents();
 
         _config = AppConfig.Load();
+
+        // 界面语言：auto 跟随系统，其余按用户选择；切换后由 Loc 广播刷新绑定
+        Loc.ApplyLanguage(_config.Language);
+        Loc.LanguageChanged += (_, _) =>
+        {
+            if (_notifyIcon != null) _notifyIcon.Text = Loc.T("App.Tray.Tooltip");
+        };
+
+        // 不常驻模式：自启动参数改为 --apply-once，并确保计划任务存在（任务被删掉时自动补回）
+        StartupManager.ArgumentsProvider = () => RunOnceService.StartupArguments(_config!);
+        if (_config.RunOnceAndExit && !RunOnceService.IsScheduleInstalled())
+        {
+            RunOnceService.SyncSchedule(_config);
+        }
 
         // 注册表是开机自启的真实来源，启动时把配置与注册表对齐
         var actuallyEnabled = StartupManager.IsEnabled();
@@ -379,7 +408,7 @@ public partial class App : Application
 
         // 窗口被隐藏/最小化时恢复，并尽量拿到前台
         _mainWindow?.RestoreFromTray();
-        _viewModel?.SetStatus("已从再次启动的请求唤出主窗口");
+        _viewModel?.SetStatus(Loc.T("App.Status.Activated"));
     }
 
     private void StopActivateListener()
@@ -467,7 +496,7 @@ public partial class App : Application
             return false;
         }
 
-        _viewModel?.SetStatus("已请求以管理员身份重新启动");
+        _viewModel?.SetStatus(Loc.T("App.Status.RestartElevated"));
         ShutdownApp();
         return true;
     }
@@ -485,12 +514,12 @@ public partial class App : Application
             id => NativeMethods.UnregisterHotKey(handle, id));
         var failed = _hotkeys.RegisterConfigured(_config);
         if (failed.Count > 0)
-            _viewModel?.SetStatus($"快捷键注册失败（可能被系统或其他软件占用）：{string.Join("、", failed)}；可在设置中修改。");
+            _viewModel?.SetStatus(Loc.T("App.Status.HotkeyFailed", string.Join("、", failed)));
     }
 
     private bool TryApplyHotkeys(Dictionary<string, HotkeyBinding> changes, out string error, List<string>? unavailableOnReset = null)
     {
-        error = "快捷键窗口尚未就绪。";
+        error = Loc.T("App.Error.HotkeyNotReady");
         if (_hotkeys == null || !_hotkeys.TryApply(_config, changes, out error, unavailableOnReset)) return false;
         _config.Save();
         _viewModel?.NotifyHotkeyChanged();
@@ -508,7 +537,7 @@ public partial class App : Application
         var unavailable = new List<string>();
         if (!TryApplyHotkeys(HotkeyBinding.CreateDefaults(), out message, unavailable)) return false;
         if (unavailable.Count != 0)
-            message = "以下默认组合已被占用，已保存但暂不能触发：" + string.Join("、", unavailable) + "。可单独修改这几项。";
+            message = Loc.T("App.Hotkey.UnavailableDefaults", string.Join("、", unavailable));
         return true;
     }
 
@@ -597,7 +626,7 @@ public partial class App : Application
     {
         _notifyIcon = new NotifyIcon
         {
-            Text = "托盘图标管家",
+            Text = Loc.T("App.Tray.Tooltip"),
             Icon = LoadAppIcon(),
             Visible = true,
             // 菜单改用原生 TrackPopupMenuEx（见 TrayPopupMenu）：不使用 WinForms 的自动弹菜单，
@@ -630,17 +659,17 @@ public partial class App : Application
         const int commandExit = 7;
 
         var command = TrayPopupMenu.Show(
-            new TrayPopupMenuItem { Text = "打开主窗口", CommandId = commandOpenMainWindow },
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.OpenMain"), CommandId = commandOpenMainWindow },
             TrayPopupMenuItem.Separator,
-            new TrayPopupMenuItem { Text = "隐藏全部托盘图标", CommandId = commandHideAllTrayIcons },
-            new TrayPopupMenuItem { Text = "显示全部托盘图标", CommandId = commandShowAllTrayIcons },
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.HideAllTrayIcons"), CommandId = commandHideAllTrayIcons },
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.ShowAllTrayIcons"), CommandId = commandShowAllTrayIcons },
             TrayPopupMenuItem.Separator,
-            new TrayPopupMenuItem { Text = "隐藏全部窗口", CommandId = commandHideAllWindows },
-            new TrayPopupMenuItem { Text = "显示全部窗口", CommandId = commandShowAllWindows },
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.HideAllWindows"), CommandId = commandHideAllWindows },
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.ShowAllWindows"), CommandId = commandShowAllWindows },
             TrayPopupMenuItem.Separator,
-            new TrayPopupMenuItem { Text = "修复右键菜单失效的图标", CommandId = commandRepairIcons },
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.RetryRecovery"), CommandId = commandRepairIcons },
             TrayPopupMenuItem.Separator,
-            new TrayPopupMenuItem { Text = "退出", CommandId = commandExit });
+            new TrayPopupMenuItem { Text = Loc.T("App.Menu.Exit"), CommandId = commandExit });
 
         switch (command)
         {
@@ -691,14 +720,14 @@ public partial class App : Application
         {
             // 重新显示时需要重建句柄，否则部分系统上图标不会立刻回来
             _notifyIcon.Visible = true;
-            _notifyIcon.Text = "托盘图标管家";
+            _notifyIcon.Text = Loc.T("App.Tray.Tooltip");
         }
 
         if (_viewModel != null)
         {
             _viewModel.StatusText = hide
                 ? _viewModel.SelfIconHint
-                : "本软件图标已显示在托盘";
+                : Loc.T("App.Status.SelfIconShown");
         }
     }
 

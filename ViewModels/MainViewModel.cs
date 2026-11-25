@@ -114,12 +114,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private long _lastExplorerProcessId;
     private long _lastAutoRetryTicks;
     private bool _disposed;
-    private string _statusText = "就绪";
+    private string _statusText = string.Empty;
     private int _selectedCount;
+
+    /// <summary>
+    /// 生成"上一句状态栏文案"的工厂。状态栏是**操作结果**（隐藏了几个、跳过几个…），
+    /// 不能靠重读字段重算，所以在写入的同时把它记下来；语言切换时重新求值一次即可。
+    /// </summary>
+    private Func<string>? _statusFactory;
 
     public MainViewModel(AppConfig config)
     {
         _config = config;
+
+        // 文案本地化：按配置里的语言偏好加载（幂等；App 之后再次 ApplyLanguage 不会重复触发）
+        Loc.ApplyLanguage(_config.Language);
+        Loc.LanguageChanged += OnLanguageChanged;
+        SetStatus(() => Loc.T("Core.Status.Ready"));
+
         if (_config.HiddenBackups == null)
         {
             _config.HiddenBackups = new Dictionary<string, TrayIconEntry>(StringComparer.OrdinalIgnoreCase);
@@ -214,14 +226,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public string SelectionSummary => _selectedCount == 0
-        ? "未选择任何图标"
-        : $"已选择 {_selectedCount} 个图标";
+        ? Loc.T("Core.Selection.None")
+        : Loc.T("Core.Selection.Summary", _selectedCount);
 
     public int HiddenCount => Icons.Count(i => i.IsHidden);
 
     public bool HasIcons => Icons.Count > 0;
 
-    public string EmptyHint => "未发现可管理的托盘图标。\n请先运行带有托盘图标的程序，再回来刷新。";
+    public string EmptyHint => Loc.T("Core.Empty.TrayIcons");
 
     public bool HideSelfTrayIcon
     {
@@ -239,9 +251,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string SelfIconHint => _config.HideSelfTrayIcon
         ? (_config.GetHotkey(HotkeyActions.ShowMain).IsValid
-            ? "本软件图标已隐藏。仍可用全局快捷键或再次打开本软件唤出主窗口。"
-            : "本软件图标已隐藏，唤出快捷键未设置。再次打开本软件即可找回主窗口。")
-        : "本软件图标显示在系统托盘中。";
+            ? Loc.T("Core.SelfIcon.HiddenWithHotkey")
+            : Loc.T("Core.SelfIcon.HiddenNoHotkey"))
+        : Loc.T("Core.SelfIcon.Visible");
 
     public bool RunAtStartup
     {
@@ -254,12 +266,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 _config.RunAtStartup = value;
                 _config.Save();
-                StatusText = value ? "已设置开机自动启动" : "已取消开机自动启动";
+                SetStatus(() => value ? Loc.T("Core.Startup.Enabled") : Loc.T("Core.Startup.Disabled"));
                 OnPropertyChanged();
             }
             else
             {
-                StatusText = "开机自启设置失败，请检查注册表权限";
+                SetStatus(() => Loc.T("Core.Startup.Failed"));
                 OnPropertyChanged();
             }
         }
@@ -283,7 +295,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get
         {
             var binding = _config.GetHotkey(HotkeyActions.ShowMain);
-            return binding.IsValid ? binding.ToString() : "未设置";
+            return binding.IsValid ? binding.ToString() : Loc.T("Core.Hotkey.Unset");
         }
     }
 
@@ -449,10 +461,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 if (Icons[i].IsHidden) hidden++;
             }
 
-            var status = $"共 {Icons.Count} 个运行中的托盘图标，其中 {hidden} 个已隐藏";
+            var iconCount = Icons.Count;
+            var status = Loc.T("Core.Status.ScanSummary", iconCount, hidden);
             if (!string.Equals(_statusText, status, StringComparison.Ordinal))
             {
-                StatusText = status;
+                SetStatus(() => Loc.T("Core.Status.ScanSummary", iconCount, hidden));
             }
 
             // 5) explorer 换了进程号 = 它刚重启过 = 系统广播过 TaskbarCreated，
@@ -464,7 +477,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception ex)
         {
-            StatusText = $"扫描失败：{ex.Message}";
+            var scanError = ex.Message;
+            SetStatus(() => Loc.T("Core.Status.ScanFailed", scanError));
         }
         finally
         {
@@ -836,7 +850,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         var targets = Icons.Where(i => i.IsSelected && !i.IsHidden).ToList();
         if (targets.Count == 0)
         {
-            StatusText = "请先勾选要隐藏的图标";
+            SetStatus(() => Loc.T("Core.Hide.SelectFirst"));
             return;
         }
 
@@ -871,7 +885,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Persist();
         UpdateCounters();
         ApplyPendingSort();
-        StatusText = $"已隐藏 {success} 个图标，对应程序仍在后台正常运行{BuildSkipSuffix(skipped)}{BuildFailSuffix(failed)}";
+        SetStatus(() => Loc.T("Core.Status.HideSelected", success) + BuildSkipSuffix(skipped) + BuildFailSuffix(failed));
     }
 
     /// <summary>隐藏当前列表中的全部图标。</summary>
@@ -908,11 +922,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Persist();
         UpdateCounters();
         ApplyPendingSort();
-        StatusText = total == 0
-            ? "所有图标都已处于隐藏状态"
+        SetStatus(() => total == 0
+            ? Loc.T("Core.Status.AllAlreadyHidden")
             : success == 0 && skipped > 0
-                ? $"已跳过 {skipped} 个图标：该程序不支持托盘重建"
-                : $"已隐藏全部 {success} 个图标{BuildSkipSuffix(skipped)}{BuildFailSuffix(failed)}";
+                ? Loc.T("Core.Status.AllSkipped", skipped)
+                : Loc.T("Core.Status.AllHidden", success) + BuildSkipSuffix(skipped) + BuildFailSuffix(failed));
     }
 
     /// <summary>隐藏单个图标的结果。</summary>
@@ -937,14 +951,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // 兜底守卫：绝不能隐藏本软件自身（会把本软件的托盘图标/窗口隐藏占位图标删掉）
         if (IsSelfItem(item))
         {
-            StatusText = "不能隐藏本软件自身的托盘图标，请用设置里的「隐藏本软件的托盘图标」";
+            SetStatus(() => Loc.T("Core.Hide.SelfBlocked"));
             return HideResult.Skipped;
         }
 
         if (item.Hwnd == IntPtr.Zero ||
             !TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity))
         {
-            StatusText = $"隐藏 {item.DisplayName} 失败：无法定位图标";
+            SetStatus(() => Loc.T("Core.Hide.LocateFailed", item.DisplayName));
             return HideResult.Failed;
         }
 
@@ -953,7 +967,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // （issue#1/#3 的根源）。Shell 不支持时宁可明确告诉用户"没隐藏成功"，也不动人家的注册。
         if (!TryHideWithoutDeleting(item.Hwnd, identity))
         {
-            StatusText = $"未隐藏 {item.DisplayName}：该图标不支持非破坏性隐藏（不会删除程序自己的注册）";
+            SetStatus(() => Loc.T("Core.Hide.StateUnsupported", item.DisplayName));
             return HideResult.Failed;
         }
 
@@ -1017,7 +1031,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             if (targets.Count == 0)
             {
-                StatusText = $"没有找到 {name} 可隐藏的托盘图标";
+                SetStatus(() => Loc.T("Core.Hide.NoIconsForProcess", name));
                 return 0;
             }
 
@@ -1044,18 +1058,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             Persist();
             UpdateCounters();
             ApplyPendingSort();
-            StatusText = success > 0
-                ? $"已隐藏 {name} 的 {success} 个托盘图标{BuildSkipSuffix(skipped)}{BuildFailSuffix(failed)}"
+            SetStatus(() => success > 0
+                ? Loc.T("Core.Status.HideProcess", name, success) + BuildSkipSuffix(skipped) + BuildFailSuffix(failed)
                 : skipped > 0
-                    ? $"已跳过 {name}：该程序不支持托盘重建"
+                    ? Loc.T("Core.Hide.ProcessSkipped", name)
                     : failed > 0
-                        ? $"未隐藏 {name}：该图标不支持非破坏性隐藏（不会删除程序自己的注册）"
-                        : $"隐藏 {name} 的托盘图标失败";
+                        ? Loc.T("Core.Hide.StateUnsupported", name)
+                        : Loc.T("Core.Hide.ProcessFailed", name));
             return success;
         }
         catch (Exception ex)
         {
-            StatusText = $"隐藏 {processName} 的托盘图标失败：{ex.Message}";
+            var hideError = ex.Message;
+            SetStatus(() => Loc.T("Core.Hide.ProcessError", processName, hideError));
             return 0;
         }
     }
@@ -1084,9 +1099,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             Persist();
             UpdateCounters();
             ApplyPendingSort();
-            StatusText = hidden.Count == 0 && orphans > 0
-                ? $"已清理 {orphans} 条已退出程序的隐藏记录"
-                : BuildRestoreStatusText(outcome);
+            SetStatus(() => hidden.Count == 0 && orphans > 0
+                ? Loc.T("Core.Status.CleanedOrphans", orphans)
+                : BuildRestoreStatusText(outcome));
         }
         finally
         {
@@ -1119,7 +1134,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         var targets = Icons.Where(i => i.IsSelected && i.IsHidden).ToList();
         if (targets.Count == 0)
         {
-            StatusText = "请先勾选要显示的图标";
+            SetStatus(() => Loc.T("Core.Restore.SelectFirst"));
             return;
         }
 
@@ -1167,7 +1182,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             if (targets.Count == 0)
             {
-                StatusText = $"没有找到 {name} 被隐藏的托盘图标";
+                SetStatus(() => Loc.T("Core.Restore.NoIconsForProcess", name));
                 return 0;
             }
 
@@ -1189,7 +1204,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception ex)
         {
-            StatusText = $"恢复 {processName} 的托盘图标失败：{ex.Message}";
+            var restoreError = ex.Message;
+            SetStatus(() => Loc.T("Core.Restore.ProcessError", processName, restoreError));
             return 0;
         }
     }
@@ -1217,9 +1233,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Persist();
         UpdateCounters();
         ApplyPendingSort();
-        StatusText = removed
-            ? $"已取消隐藏 {item.DisplayName}：该程序下次启动时图标会自动恢复"
-            : $"已取消 {item.DisplayName} 的隐藏标记";
+        SetStatus(() => removed
+            ? Loc.T("Core.CancelHide.Done", item.DisplayName)
+            : Loc.T("Core.CancelHide.NoRecord", item.DisplayName));
         return removed;
     }
 
@@ -1255,7 +1271,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             // 双击操作原本不写状态栏，这里给一个明确反馈（自身的提示已由 HideItem 写好）
             if (!IsSelfItem(item))
             {
-                StatusText = $"已跳过 {item.DisplayName}：该程序不支持托盘重建，隐藏后图标会点不动";
+                SetStatus(() => Loc.T("Core.Hide.SkippedUnsupported", item.DisplayName));
             }
             return;
         }
@@ -1543,31 +1559,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>拼装恢复结果提示。失败项必须写清楚"为什么没恢复"，否则用户会以为功能坏了。</summary>
     private static string BuildRestoreStatusText(RestoreOutcome outcome)
     {
+        var separator = Loc.T("Core.Common.ListSeparator");
+
         if (outcome.Restored == 0 && outcome.Failed == 0)
         {
             return outcome.Cleaned > 0
-                ? $"已清理 {outcome.Cleaned} 条已退出程序的隐藏记录"
-                : "当前没有被隐藏的图标";
+                ? Loc.T("Core.Status.CleanedOrphans", outcome.Cleaned)
+                : Loc.T("Core.Restore.NothingHidden");
         }
 
         if (outcome.Restored == 0)
         {
             var names = outcome.UnsupportedNames.Length > 0
-                ? string.Join("、", outcome.UnsupportedNames) + " "
+                ? string.Join(separator, outcome.UnsupportedNames) + " "
                 : string.Empty;
-            return $"恢复失败：{names}不响应托盘重建，也不会伪造图标 —— 请重启该程序后再试";
+            return Loc.T("Core.Restore.FailedAll", names);
         }
 
-        var text = $"已恢复 {outcome.Restored} 个图标到任务栏托盘";
+        var text = Loc.T("Core.Restore.Restored", outcome.Restored);
 
-        if (outcome.Cleaned > 0) text += $"（另清理 {outcome.Cleaned} 条已退出程序的记录）";
+        if (outcome.Cleaned > 0) text += Loc.T("Core.Restore.RestoredWithCleaned", outcome.Cleaned);
 
         if (outcome.Failed > 0)
         {
             var names = outcome.UnsupportedNames.Length > 0
-                ? string.Join("、", outcome.UnsupportedNames)
-                : $"{outcome.Failed} 个程序";
-            text += $"；{names} 不响应托盘重建，已保持隐藏（不会伪造图标），请重启该程序后再试";
+                ? string.Join(separator, outcome.UnsupportedNames)
+                : Loc.T("Core.Restore.FailedCount", outcome.Failed);
+            text += Loc.T("Core.Restore.PartialUnsupported", names);
         }
 
         return text;
@@ -1580,7 +1598,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool GuardRestoreInProgress()
     {
         if (!_isRestoring) return false;
-        StatusText = "正在恢复托盘图标，请稍候";
+        SetStatus(() => Loc.T("Core.Restore.Busy"));
         return true;
     }
 
@@ -1591,7 +1609,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (_isRestoring)
         {
-            StatusText = "正在恢复托盘图标，请稍候";
+            SetStatus(() => Loc.T("Core.Restore.Busy"));
             return false;
         }
 
@@ -1669,7 +1687,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             if (targets.Count == 0)
             {
-                StatusText = "没有需要重试的图标";
+                SetStatus(() => Loc.T("Core.Retry.None"));
                 return 0;
             }
 
@@ -1680,9 +1698,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             UpdateCounters();
             ApplyPendingSort();
 
-            StatusText = outcome.Restored > 0
-                ? $"已恢复 {outcome.Restored} 个图标"
-                : "重试未成功：这些程序仍未重新注册，重启该程序后图标会自动恢复";
+            SetStatus(() => outcome.Restored > 0
+                ? Loc.T("Core.Retry.Recovered", outcome.Restored)
+                : Loc.T("Core.Retry.Failed"));
 
             return outcome.Restored;
         }
@@ -1742,7 +1760,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (cleared > 0)
         {
-            StatusText = $"资源管理器已重启，{cleared} 个图标的右键菜单已自动恢复";
+            SetStatus(() => Loc.T("Core.Status.ExplorerRestarted", cleared));
         }
     }
 
@@ -1770,6 +1788,39 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         foreach (var item in Icons) item.IsSelected = false;
         UpdateCounters();
+    }
+
+    // ---------------------------------------------------------------- 文案（本地化）
+
+    /// <summary>
+    /// 写入状态栏文案，并记下"它怎么算出来的"。
+    /// 状态栏显示的是**上一次操作的结果**，语言切换时无法靠重读字段重算，
+    /// 所以这里保存生成函数，切换语言后重新求值即可（<see cref="RefreshLocalizedTexts"/>）。
+    /// </summary>
+    private void SetStatus(Func<string> factory)
+    {
+        _statusFactory = factory;
+        StatusText = factory();
+    }
+
+    /// <summary>语言切换：重新生成本地化文案，并通知所有派生属性刷新。</summary>
+    private void OnLanguageChanged(object? sender, EventArgs e) => RunOnUiThread(RefreshLocalizedTexts);
+
+    private void RefreshLocalizedTexts()
+    {
+        if (_disposed) return;
+
+        StatusText = _statusFactory?.Invoke() ?? Loc.T("Core.Status.Ready");
+
+        OnPropertyChanged(nameof(EmptyHint));
+        OnPropertyChanged(nameof(SelectionSummary));
+        OnPropertyChanged(nameof(SelfIconHint));
+        OnPropertyChanged(nameof(HotkeyText));
+
+        foreach (var item in Icons)
+        {
+            item.RaiseLocalizedChanged();
+        }
     }
 
     // ---------------------------------------------------------------- 辅助
@@ -2013,11 +2064,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>隐藏操作里"未隐藏成功"的汇总后缀（不支持非破坏性隐藏的图标）。</summary>
     private static string BuildFailSuffix(int failed)
-        => failed > 0 ? $"（{failed} 个未隐藏：该图标不支持非破坏性隐藏）" : string.Empty;
+        => failed > 0 ? Loc.T("Core.Suffix.HideFailed", failed) : string.Empty;
 
     /// <summary>隐藏操作里"被跳过"的汇总后缀。</summary>
     private static string BuildSkipSuffix(int skipped)
-        => skipped > 0 ? $"（跳过 {skipped} 个：该程序不支持托盘重建）" : string.Empty;
+        => skipped > 0 ? Loc.T("Core.Suffix.SkippedUnsupported", skipped) : string.Empty;
 
     /// <summary>
     /// 保存隐藏备份到 config.json。
@@ -2064,6 +2115,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RunOnUiThread(() =>
         {
             _disposed = true;
+            Loc.LanguageChanged -= OnLanguageChanged;
             StopCore();
             FlushPersist();
         });

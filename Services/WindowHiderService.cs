@@ -1,6 +1,8 @@
 using System.Drawing;
 using System.IO;
 using TrayHider.Interop;
+using TrayHider.Models;
+
 using Forms = System.Windows.Forms;
 
 namespace TrayHider.Services;
@@ -62,6 +64,13 @@ internal sealed class WindowHiderService : IDisposable
     private const int MenuCommandShowAllWindows = 3;
 
     private readonly Dictionary<IntPtr, HiddenWindow> _hidden = new();
+
+    public WindowHiderService()
+    {
+        // 右键菜单是每次右键**新建**的，文本在弹出时现取即可；
+        // 只有常驻的托盘图标 tooltip 需要在语言切换时刷一遍。
+        Loc.LanguageChanged += OnLanguageChanged;
+    }
 
     /// <summary>用户在托盘图标上左键单击 / 双击，请求恢复该窗口。</summary>
     public event EventHandler<IntPtr>? RestoreRequested;
@@ -207,10 +216,7 @@ internal sealed class WindowHiderService : IDisposable
             var (icon, ownsIcon) = LoadTrayIcon(record.Hwnd, record.ExecutablePath);
             if (ownsIcon) record.OwnedIcon = icon;
 
-            var tooltip = string.IsNullOrWhiteSpace(record.Title) ? record.ProcessName : record.Title;
-            if (string.IsNullOrWhiteSpace(tooltip)) tooltip = "已隐藏的窗口";
-            // NotifyIcon.Text 有长度上限，超出会被 WinForms 直接拒绝
-            if (tooltip.Length > 60) tooltip = tooltip.Substring(0, 60) + "...";
+            var tooltip = BuildTooltip(record);
 
             var hwnd = record.Hwnd;
             var notifyIcon = new Forms.NotifyIcon
@@ -247,6 +253,41 @@ internal sealed class WindowHiderService : IDisposable
         }
     }
 
+    /// <summary>生成托盘图标提示文本（标题优先，退化到进程名，最后是本地化兜底文案）。</summary>
+    private static string BuildTooltip(HiddenWindow record)
+    {
+        var tooltip = string.IsNullOrWhiteSpace(record.Title) ? record.ProcessName : record.Title;
+        if (string.IsNullOrWhiteSpace(tooltip)) tooltip = CoreText.T("Core.Tray.TooltipFallback");
+
+        // NotifyIcon.Text 有长度上限，超出会被 WinForms 直接拒绝
+        return tooltip.Length > 60 ? tooltip.Substring(0, 60) + "..." : tooltip;
+    }
+
+    /// <summary>语言切换：把已有托盘图标上的提示文本换成新语言。</summary>
+    private void OnLanguageChanged(object? sender, EventArgs e) => RefreshTooltips();
+
+    private void RefreshTooltips()
+    {
+        foreach (var record in _hidden.Values)
+        {
+            var icon = record.TrayIcon;
+            if (icon == null) continue;
+
+            try
+            {
+                var text = BuildTooltip(record);
+                if (!string.Equals(icon.Text, text, StringComparison.Ordinal))
+                {
+                    icon.Text = text;
+                }
+            }
+            catch
+            {
+                // 图标正在释放时改 Text 会抛；这里不补救
+            }
+        }
+    }
+
     /// <summary>
     /// 在该隐藏窗口的托盘图标位置弹出原生右键菜单，并按选择分派命令。
     /// 菜单项与行为保持不变：显示窗口 / 关闭窗口 / 显示全部窗口。
@@ -254,10 +295,10 @@ internal sealed class WindowHiderService : IDisposable
     private void ShowTrayPopupMenu(IntPtr hwnd)
     {
         var command = TrayPopupMenu.Show(
-            new TrayPopupMenuItem { Text = "显示窗口", CommandId = MenuCommandShowWindow },
-            new TrayPopupMenuItem { Text = "关闭窗口", CommandId = MenuCommandCloseWindow },
+            new TrayPopupMenuItem { Text = CoreText.T("Core.Menu.ShowWindow"), CommandId = MenuCommandShowWindow },
+            new TrayPopupMenuItem { Text = CoreText.T("Core.Menu.CloseWindow"), CommandId = MenuCommandCloseWindow },
             TrayPopupMenuItem.Separator,
-            new TrayPopupMenuItem { Text = "显示全部窗口", CommandId = MenuCommandShowAllWindows });
+            new TrayPopupMenuItem { Text = CoreText.T("Core.Menu.ShowAllWindows"), CommandId = MenuCommandShowAllWindows });
 
         switch (command)
         {
@@ -346,6 +387,8 @@ internal sealed class WindowHiderService : IDisposable
     /// <summary>销毁全部托盘图标（不恢复窗口，恢复由调用方负责）。</summary>
     public void Dispose()
     {
+        Loc.LanguageChanged -= OnLanguageChanged;
+
         foreach (var record in _hidden.Values.ToList())
         {
             DisposeTrayIcon(record);

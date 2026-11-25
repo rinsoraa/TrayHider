@@ -1,7 +1,8 @@
 <Window x:Class="TrayHider.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="设置"
+        xmlns:services="clr-namespace:TrayHider.Services"
+        Title="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Title]}"
         Width="600" Height="760"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
@@ -22,7 +23,7 @@
             <!-- 标题栏 -->
             <Grid Grid.Row="0" Height="48" Background="Transparent"
                   MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
-                <TextBlock Text="设置"
+                <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Title]}"
                            Margin="20,0,0,0"
                            VerticalAlignment="Center"
                            FontSize="{DynamicResource App.FontSize.Subtitle}"
@@ -40,7 +41,7 @@
                 <StackPanel Margin="20,4,20,24">
 
                     <!-- ==================== 启动与后台 ==================== -->
-                    <TextBlock Text="启动与后台"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Startup]}"
                                Margin="2,0,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -58,8 +59,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="开机自动启动" />
-                                    <TextBlock Text="登录 Windows 后自动在后台运行，并恢复上次的隐藏状态。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.AutoStart.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.AutoStart.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -79,7 +80,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="隐藏本软件的托盘图标" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.HideSelfTray.Title]}" />
                                     <TextBlock Text="{Binding SelfIconHint}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
@@ -100,8 +101,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="关闭窗口时最小化到托盘" />
-                                    <TextBlock Text="关闭后隐藏守护继续运行，避免已隐藏的图标重新出现。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.MinimizeToTray.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.MinimizeToTray.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -115,7 +116,7 @@
                     </Border>
 
                     <!-- ==================== 窗口隐藏 ==================== -->
-                    <TextBlock Text="窗口隐藏"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.WindowHiding]}"
                                Margin="2,22,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -133,8 +134,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="隐藏窗口时同时隐藏该程序的托盘图标" />
-                                    <TextBlock Text="把窗口收进托盘时，把它原本的托盘图标也一起藏起来；恢复窗口时自动还原。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.HideAppTrayWithWindow.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.HideAppTrayWithWindow.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -153,8 +154,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="退出本软件时恢复被隐藏的窗口" />
-                                    <TextBlock Text="关闭本软件后窗口会自动回到桌面，不会把窗口遗留在隐藏状态。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreWindowsOnExit.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreWindowsOnExit.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -168,7 +169,7 @@
                     </Border>
 
                     <!-- ==================== 权限 ==================== -->
-                    <TextBlock Text="权限与运行方式"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Permission]}"
                                Margin="2,22,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -184,7 +185,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                <TextBlock Text="当前运行权限" />
+                                <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Permission.Current]}" />
                                 <TextBlock Text="{Binding ElevationHint, RelativeSource={RelativeSource AncestorType=Window}}"
                                            Margin="0,3,0,0"
                                            TextWrapping="Wrap"
@@ -193,15 +194,76 @@
                             </StackPanel>
                             <Button Grid.Column="1"
                                     x:Name="RelaunchElevatedButton"
-                                    Content="以管理员身份重启"
+                                    Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Permission.Relaunch]}"
                                     Style="{StaticResource StandardButton}"
                                     VerticalAlignment="Center"
                                     Click="RelaunchElevated_Click" />
                         </Grid>
                     </Border>
 
+                    <!-- ==================== 界面与运行方式 ==================== -->
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Group]}"
+                               Margin="2,22,0,8"
+                               FontSize="{DynamicResource App.FontSize.Caption}"
+                               Foreground="{DynamicResource App.TextSecondary}" />
+
+                    <Border Background="{DynamicResource App.CardBackground}"
+                            BorderBrush="{DynamicResource App.Border}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14,12">
+                        <StackPanel>
+                            <!-- 语言 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <ComboBox x:Name="LanguageCombo"
+                                          Grid.Column="1"
+                                          Width="168"
+                                          VerticalAlignment="Center"
+                                          ItemsSource="{Binding LanguageOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                          DisplayMemberPath="Label"
+                                          SelectedValuePath="Value"
+                                          SelectedValue="{Binding SelectedLanguageValue, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </Grid>
+
+                            <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,14,0,14" />
+
+                            <!-- 隐藏图标后退出（不常驻）：功能已实现，但本机端到端验证未通过（置位后图标仍显示），
+                                 在验证通过前不向用户暴露，避免"以为隐藏了其实没有"。 -->
+                            <Grid Visibility="Collapsed">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOnce.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOnce.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <CheckBox x:Name="RunOnceToggle"
+                                          Grid.Column="1"
+                                          VerticalAlignment="Center"
+                                          IsChecked="{Binding RunOnceEnabled, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
                     <!-- ==================== 快捷键 ==================== -->
-                    <TextBlock Text="全局快捷键"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Hotkeys]}"
                                Margin="2,22,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -275,20 +337,20 @@
 
                             <CheckBox x:Name="WinModifierToggle"
                                       Grid.Column="0"
-                                      Content="附加 Win"
-                                      ToolTip="系统会先消费 Win 组合，主窗口收不到 Win 键。要录 Ctrl + Win + T 这类组合时，先勾选此项，再按 Ctrl + T。"
+                                      Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.WinCheck]}"
+                                      ToolTip="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.WinCheckTip]}"
                                       VerticalAlignment="Center"
                                       FontSize="{DynamicResource App.FontSize.Caption}" />
 
                             <Button Grid.Column="1"
-                                    Content="仅重置快捷键"
+                                    Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.Reset]}"
                                     Style="{StaticResource StandardButton}"
-                                    ToolTip="只把 5 个全局快捷键恢复为默认值，隐藏记录与其它开关保持不变。"
+                                    ToolTip="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.ResetTip]}"
                                     VerticalAlignment="Center"
                                     Click="ResetHotkeys_Click" />
                         </Grid>
 
-                        <TextBlock Text="点「修改」后按下组合键；按 Delete 清空该行，Esc 取消。需要 Win 参与时先勾选「附加 Win」。注册失败会保留原快捷键并提示冲突。"
+                        <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.Hint]}"
                                    Margin="0,8,0,2"
                                    TextWrapping="Wrap"
                                    FontSize="{DynamicResource App.FontSize.Caption}"
@@ -297,7 +359,7 @@
                     </Border>
 
                     <!-- ==================== 关于与操作 ==================== -->
-                    <TextBlock Text="其他"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Other]}"
                                Margin="2,22,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -314,15 +376,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="恢复所有被隐藏的图标" />
-                                    <TextBlock Text="清空隐藏记录。图标将在对应程序重新注册后回到托盘。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreAll.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreAll.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="全部恢复"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.RestoreAll]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="RestoreAll_Click" />
@@ -336,15 +398,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="修复右键菜单失效的图标" />
-                                    <TextBlock Text="重试旧版等待恢复的图标；已是无响应替代图标的，请重启对应程序。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Repair.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Repair.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="重新修复"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Repair.Button]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="RepairDegraded_Click" />
@@ -358,7 +420,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="配置文件位置" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.ConfigPath.Title]}" />
                                     <TextBlock Text="{Binding ConfigPathText}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
@@ -366,7 +428,7 @@
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="打开目录"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.ConfigPath.Open]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="OpenConfigDir_Click" />
@@ -380,15 +442,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="退出程序" />
-                                    <TextBlock Text="退出后将不再隐藏任何图标，被隐藏的窗口会被恢复。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Exit.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Exit.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="退出"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Exit.Button]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="Exit_Click" />
@@ -396,7 +458,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="托盘图标管家 v1.2.2"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Footer.Version]}"
                                Margin="2,22,0,0"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextTertiary}" />

@@ -111,6 +111,18 @@ public sealed class AppConfig
     /// <summary>开机自动启动。</summary>
     public bool RunAtStartup { get; set; }
 
+    /// <summary>界面语言：auto（跟随系统）/ zh / en。</summary>
+    public string Language { get; set; } = "auto";
+
+    /// <summary>
+    /// 隐藏图标后不常驻：登录时只应用一次隐藏状态就退出进程，之后由计划任务定期补应用。
+    /// 隐藏状态本身由 Shell 保存，所以进程退出后图标仍然是隐藏的。
+    /// </summary>
+    public bool RunOnceAndExit { get; set; }
+
+    /// <summary>不常驻模式下补应用隐藏状态的间隔（分钟，1~15）。</summary>
+    public int RunOnceIntervalMinutes { get; set; } = 3;
+
     /// <summary>
     /// 旧版字段：唤出主窗口快捷键的修饰键。
     /// v1.2.0 起快捷键改为多动作表（<see cref="Hotkeys"/>），此字段仅用于读取旧配置并迁移，
@@ -255,6 +267,15 @@ public sealed class AppConfig
         HiddenKeys ??= new List<string>();
         HiddenBackups ??= new Dictionary<string, TrayIconEntry>();
         RebuildUnsupported ??= new List<string>();
+
+        Language = Language?.Trim().ToLowerInvariant() switch
+        {
+            "zh" or "zh-cn" or "zh-hans" => "zh",
+            "en" or "en-us" => "en",
+            _ => "auto"
+        };
+
+        RunOnceIntervalMinutes = Math.Clamp(RunOnceIntervalMinutes, 1, 15);
 
         // 进程名归一化（去 .exe、去空白），保证学习记录能命中
         for (var i = 0; i < RebuildUnsupported.Count; i++)

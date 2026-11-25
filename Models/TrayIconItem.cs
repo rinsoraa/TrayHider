@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using TrayHider.Services;
+
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
 using TrayHider.Interop;
@@ -118,17 +120,24 @@ public sealed class TrayIconItem : INotifyPropertyChanged
     }
 
     public string StateText => IsHidden
-        ? "已隐藏"
-        : _callbackDegraded ? "显示中 · 右键菜单可能失效" : "显示中";
+        ? CoreText.T("Core.State.Hidden")
+        : _callbackDegraded ? CoreText.T("Core.State.Degraded") : CoreText.T("Core.State.Visible");
 
     public string SubTitle
     {
         get
         {
-            var proc = string.IsNullOrEmpty(ProcessName) ? "(进程名未知)" : ProcessName;
-            var run = IsRunning ? "运行中" : "未运行";
-            return $"{proc}  ·  {run}";
+            var proc = string.IsNullOrEmpty(ProcessName) ? CoreText.T("Core.SubTitle.UnknownProcess") : ProcessName;
+            var run = IsRunning ? CoreText.T("Core.SubTitle.Running") : CoreText.T("Core.SubTitle.NotRunning");
+            return CoreText.T("Core.SubTitle.Format", proc, run);
         }
+    }
+
+    /// <summary>语言切换后刷新所有本地化文本（状态与副标题）。</summary>
+    internal void RaiseLocalizedChanged()
+    {
+        OnPropertyChanged(nameof(StateText));
+        OnPropertyChanged(nameof(SubTitle));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -138,4 +147,38 @@ public sealed class TrayIconItem : INotifyPropertyChanged
 
     private void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+/// <summary>
+/// 核心层文案入口（MainViewModel / Models / WindowListViewModel / WindowHiderService 共用）。
+///
+/// 为什么还要这一层：模型可能在视图模型之外被直接构造（例如自检），
+/// 若此时 <see cref="Loc"/> 还没 ApplyLanguage 过，取文案会退化成键名。
+/// 这里做一次**幂等**的初始化兜底；视图模型随后用配置里的语言偏好覆盖即可。
+/// </summary>
+internal static class CoreText
+{
+    private static bool _initialized;
+
+    /// <summary>确保 Loc 至少应用过一次（按系统界面语言判定）；重复调用无副作用。</summary>
+    public static void EnsureInitialized()
+    {
+        if (_initialized) return;
+        _initialized = true;
+        Loc.ApplyLanguage("auto");
+    }
+
+    /// <summary>按键取文案。</summary>
+    public static string T(string key)
+    {
+        EnsureInitialized();
+        return Loc.T(key);
+    }
+
+    /// <summary>按键取文案并填充占位符。</summary>
+    public static string T(string key, params object?[] args)
+    {
+        EnsureInitialized();
+        return Loc.T(key, args);
+    }
 }

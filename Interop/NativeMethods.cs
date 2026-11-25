@@ -124,4 +124,30 @@ internal static class NativeMethods
         public int topHeight;
         public int bottomHeight;
     }
+
+    // ---------------------------------------------------------------- 进程内存
+
+    /// <summary>
+    /// 当前进程的伪句柄（kernel32!GetCurrentProcess 的返回值）。
+    /// SetProcessWorkingSetSize 用它即可，不需要 OpenProcess / GetCurrentProcess。
+    /// </summary>
+    internal static readonly IntPtr CurrentProcessPseudoHandle = new(-1);
+
+    /// <summary>
+    /// 裁剪进程工作集：把最近没有访问的物理页换出到页面文件，调用后"任务管理器的内存"会立刻下降。
+    ///
+    /// 重要边界：**它不减少私有字节/提交量**，被换出的页面在下次访问时还会读回来，
+    /// 所以这只影响"常驻物理内存"的观感，不等于真的省了内存。
+    /// 传 -1/-1 表示由系统决定最小/最大工作集。
+    /// </summary>
+    /// <param name="process">进程句柄；当前进程用 <see cref="CurrentProcessPseudoHandle"/>。</param>
+    /// <param name="minimumWorkingSetSize">最小工作集字节数；传 -1 表示由系统决定。</param>
+    /// <param name="maximumWorkingSetSize">最大工作集字节数；传 -1 表示由系统决定。</param>
+    /// <returns>成功返回 true；失败返回 false，错误码由 <see cref="System.Runtime.InteropServices.Marshal.GetLastWin32Error"/> 取得。</returns>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetProcessWorkingSetSize(
+        IntPtr process,
+        IntPtr minimumWorkingSetSize,
+        IntPtr maximumWorkingSetSize);
 }

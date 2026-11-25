@@ -13,7 +13,7 @@ using MessageBox = System.Windows.MessageBox;
 
 namespace TrayHider;
 
-public partial class SettingsWindow : Window
+public partial class SettingsWindow : Window, System.ComponentModel.INotifyPropertyChanged
 {
     private readonly MainViewModel _viewModel;
     private readonly MainWindow _owner;
@@ -35,6 +35,12 @@ public partial class SettingsWindow : Window
 
         BuildHotkeyRows();
 
+        // 语言：先按配置生效，再建下拉；切换语言后选项文字本身也要跟着变
+        Loc.ApplyLanguage(Config.Language);
+        RebuildLanguageOptions();
+        Loc.LanguageChanged += OnLanguageChanged;
+        Closed += (_, _) => Loc.LanguageChanged -= OnLanguageChanged;
+
         Loaded += (_, _) =>
         {
             WindowChrome.Apply(this);
@@ -54,14 +60,10 @@ public partial class SettingsWindow : Window
             var app = (App)System.Windows.Application.Current;
             if (app.IsElevated)
             {
-                return "已以管理员身份运行：可以管理以管理员权限运行的程序（含它们的托盘图标恢复与窗口隐藏）。"
-                     + "个别程序的右键菜单失效与权限无关——例如自带替代图标、或不响应系统托盘重建的程序，"
-                     + "这类情况需要重启该程序本身才能恢复。";
+                return Loc.T("Settings.Permission.ElevatedHint");
             }
 
-            return "当前为普通权限。部分以管理员权限运行的程序（例如一些安全软件、驱动服务）"
-                 + "在提权后才能恢复或隐藏它们的托盘图标与窗口，需要时可用右侧按钮以管理员身份重启。"
-                 + "右键菜单失效并不都由权限引起：自带替代图标或不响应托盘重建的程序，重启该程序即可恢复。";
+            return Loc.T("Settings.Permission.NormalHint");
         }
     }
 
@@ -70,15 +72,14 @@ public partial class SettingsWindow : Window
         var app = (App)System.Windows.Application.Current;
         if (app.IsElevated)
         {
-            MessageBox.Show(this, "当前已经是管理员权限，无需重复启动。", "托盘图标管家",
+            MessageBox.Show(this, Loc.T("Settings.Permission.AlreadyElevated"), AppTitleText(),
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         var result = MessageBox.Show(this,
-            "将以管理员身份重新启动托盘图标管家。\n\n" +
-            "当前已隐藏的托盘图标会保持隐藏（配置不变），被隐藏的窗口会在退出时恢复，重启后可用设置里的『恢复所有被隐藏的图标』再次接管。\n\n继续吗？",
-            "以管理员身份重启",
+            Loc.T("Settings.Permission.RelaunchConfirm"),
+            Loc.T("Settings.Permission.RelaunchTitle"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
 
@@ -87,7 +88,7 @@ public partial class SettingsWindow : Window
         Close();
         if (!app.RelaunchAsAdministrator())
         {
-            MessageBox.Show(this, "提权被取消或失败，程序保持普通权限运行。", "托盘图标管家",
+            MessageBox.Show(this, Loc.T("Settings.Permission.RelaunchFailed"), AppTitleText(),
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -98,8 +99,8 @@ public partial class SettingsWindow : Window
         var repaired = _viewModel.RetryDegradedIcons();
         var status = _viewModel.StatusText;
         MessageBox.Show(this,
-            string.IsNullOrWhiteSpace(status) ? "修复操作已完成。" : status,
-            "托盘图标管家",
+            string.IsNullOrWhiteSpace(status) ? Loc.T("Settings.Repair.ResultFallback") : status,
+            AppTitleText(),
             MessageBoxButton.OK,
             repaired > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
@@ -198,7 +199,7 @@ public partial class SettingsWindow : Window
         var problem = HotkeyCapture.Problem(modifiers, virtualKey);
         if (problem != null)
         {
-            MessageBox.Show(this, problem, "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, problem, AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Warning);
             StopRecording();
             return true;
         }
@@ -212,8 +213,8 @@ public partial class SettingsWindow : Window
         }
 
         MessageBox.Show(this,
-            "这个组合没能注册成功：可能已被其它软件占用，或与本软件其它动作重复。原快捷键保持不变，请换一个组合。",
-            "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Loc.T("Hotkey.Register.Failed"),
+            AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Warning);
         StopRecording();
         return true;
     }
@@ -253,8 +254,8 @@ public partial class SettingsWindow : Window
         if (showError)
         {
             MessageBox.Show(this,
-                "没有清空成功，请稍后重试。",
-                "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Loc.T("Hotkey.Clear.Failed"),
+                AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         StopRecording();
@@ -275,20 +276,20 @@ public partial class SettingsWindow : Window
             if (!string.IsNullOrWhiteSpace(message))
             {
                 MessageBox.Show(this,
-                    "已把 5 个全局快捷键恢复为默认值，其它设置保持不变。\n\n" + message,
-                    "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    Loc.T("Hotkey.Reset.Note", message),
+                    AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             MessageBox.Show(this,
-                "已把 5 个全局快捷键恢复为默认值，其它设置保持不变。",
-                "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Information);
+                Loc.T("Hotkey.Reset.Success"),
+                AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         MessageBox.Show(this,
-            string.IsNullOrWhiteSpace(message) ? "重置失败，请稍后重试。" : message,
-            "托盘图标管家", MessageBoxButton.OK, MessageBoxImage.Warning);
+            string.IsNullOrWhiteSpace(message) ? Loc.T("Hotkey.Reset.Failed") : message,
+            AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void StopRecording()
@@ -321,11 +322,154 @@ public partial class SettingsWindow : Window
         _viewModel.RestoreAll();
         var status = _viewModel.StatusText;
         MessageBox.Show(this,
-            string.IsNullOrWhiteSpace(status) ? "恢复操作已完成。" : status,
-            "托盘图标管家",
+            string.IsNullOrWhiteSpace(status) ? Loc.T("Settings.Restore.ResultFallback") : status,
+            AppTitleText(),
             MessageBoxButton.OK,
             MessageBoxImage.Information);
     }
+
+    // ---------------------------------------------------------------- 界面语言 / 运行方式
+
+    /// <summary>语言下拉项：<c>Value</c> 写进配置，<c>Label</c> 随当前语言刷新。</summary>
+    public sealed record LanguageOption(string Value, string Label);
+
+    private List<LanguageOption> _languageOptions = new();
+    private bool _rebuildingLanguage;
+
+    /// <summary>下拉数据源。切换语言后 <c>Label</c> 需要重新求值，所以整表重建。</summary>
+    public IReadOnlyList<LanguageOption> LanguageOptions
+    {
+        get => _languageOptions;
+        private set
+        {
+            _languageOptions = new List<LanguageOption>(value);
+            OnPropertyChanged(nameof(LanguageOptions));
+        }
+    }
+
+    /// <summary>当前选中的语言项（对外只读语义；写入等价于切换语言）。</summary>
+    public LanguageOption? SelectedLanguage
+    {
+        get => _languageOptions.FirstOrDefault(o => string.Equals(o.Value, Config.Language, StringComparison.OrdinalIgnoreCase));
+        set
+        {
+            if (value is not null) SelectedLanguageValue = value.Value;
+        }
+    }
+
+    /// <summary>
+    /// ComboBox 的二路绑定目标（SelectedValue）。<see cref="LanguageOption"/> 是 record，
+    /// 它的 <c>Value</c> 是 init-only 只读属性，WPF 二路写不进去（会报"属性只读"且选择不落盘），
+    /// 所以这里用字符串属性承接选中值，写入时统一走一次"生效 + 保存 + 重建选项"。
+    /// </summary>
+    public string SelectedLanguageValue
+    {
+        get => Config.Language;
+        set
+        {
+            if (_rebuildingLanguage) return;
+
+            var pref = string.IsNullOrWhiteSpace(value) ? Loc.Auto : value.Trim().ToLowerInvariant();
+            if (string.Equals(Config.Language, pref, StringComparison.OrdinalIgnoreCase)) return;
+
+            ApplyLanguagePreference(pref);
+            RebuildLanguageOptions();
+            OnPropertyChanged(nameof(SelectedLanguage));
+        }
+    }
+
+    /// <summary>「隐藏图标后退出（不常驻）」开关：交给 RunOnceService 落盘/建计划任务，并把结果提示给用户。</summary>
+    public bool RunOnceEnabled
+    {
+        get => Config.RunOnceAndExit;
+        set
+        {
+            if (Config.RunOnceAndExit == value) return;
+
+            var message = string.Empty;
+            try
+            {
+                message = RunOnceService.SetEnabled(Config, value);
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+            }
+
+            OnPropertyChanged();
+
+            try
+            {
+                MessageBox.Show(this, message, AppTitleText(), MessageBoxButton.OK,
+                    value ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[设置] 显示运行方式提示失败: " + ex.Message);
+            }
+        }
+    }
+
+    /// <summary>窗口标题文案：app 区没提供时退回通用应用名，避免界面出现裸键名。</summary>
+    private static string AppTitleText()
+    {
+        var title = Loc.T("App.Title");
+        return string.Equals(title, "App.Title", StringComparison.Ordinal) ? Loc.T("Common.AppName") : title;
+    }
+
+    /// <summary>切换语言：立即刷新界面 + 保存到配置（失败不影响使用）。</summary>
+    private void ApplyLanguagePreference(string pref)
+    {
+        try
+        {
+            Loc.ApplyLanguage(pref);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[设置] 切换语言失败: " + ex.Message);
+        }
+
+        try
+        {
+            Config.Language = pref;
+            Config.Save();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[设置] 保存语言偏好失败: " + ex.Message);
+        }
+    }
+
+    /// <summary>按当前语言重建三个选项的文字，并保持选中项不变。</summary>
+    private void RebuildLanguageOptions()
+    {
+        _rebuildingLanguage = true;
+        try
+        {
+            var selected = SelectedLanguageValue;
+            LanguageOptions = new List<LanguageOption>
+            {
+                new(Loc.Auto, Loc.T("Settings.Language.Auto")),
+                new(Loc.Chinese, Loc.T("Settings.Language.Chinese")),
+                new(Loc.English, Loc.T("Settings.Language.English"))
+            };
+
+            // 选中项变了（或首次为空）时通知一次，保证 ComboBox 显示正确
+            OnPropertyChanged(nameof(SelectedLanguageValue));
+            OnPropertyChanged(nameof(SelectedLanguage));
+            System.Diagnostics.Debug.WriteLine($"[设置] 语言选项已重建，当前 {selected}");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[设置] 重建语言选项失败: " + ex.Message);
+        }
+        finally
+        {
+            _rebuildingLanguage = false;
+        }
+    }
+
+    private void OnLanguageChanged(object? sender, EventArgs e) => RebuildLanguageOptions();
 
     private void OpenConfigDir_Click(object sender, RoutedEventArgs e)
     {
@@ -340,7 +484,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"无法打开目录：{ex.Message}", "托盘图标管家",
+            MessageBox.Show(this, Loc.T("Settings.ConfigPath.OpenFailed", ex.Message), AppTitleText(),
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -348,9 +492,8 @@ public partial class SettingsWindow : Window
     private void Exit_Click(object sender, RoutedEventArgs e)
     {
         var result = MessageBox.Show(this,
-            "确定要退出托盘图标管家吗？\n\n退出后，已被隐藏的图标将在对应程序重新注册后回到托盘，被隐藏的窗口会被恢复，" +
-            "本软件也不再提供隐藏守护。",
-            "确认退出",
+            Loc.T("Settings.Exit.ConfirmText"),
+            Loc.T("Settings.Exit.ConfirmTitle"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
 
@@ -360,4 +503,9 @@ public partial class SettingsWindow : Window
             _owner.RequestShutdown();
         }
     }
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
 }

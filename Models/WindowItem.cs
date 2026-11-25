@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using TrayHider.Services;
+
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
 
@@ -108,17 +110,24 @@ public sealed class WindowItem : INotifyPropertyChanged
     }
 
     /// <summary>状态徽标文案。</summary>
-    public string StateText => IsHidden ? "已隐藏" : "显示中";
+    public string StateText => IsHidden ? CoreText.T("Core.State.Hidden") : CoreText.T("Core.State.Visible");
 
     /// <summary>次级文案：进程名 · 运行中/未运行。</summary>
     public string SubTitle
     {
         get
         {
-            var process = string.IsNullOrEmpty(ProcessName) ? "(进程名未知)" : ProcessName;
-            var running = IsRunning ? "运行中" : "未运行";
-            return process + "  ·  " + running;
+            var process = string.IsNullOrEmpty(ProcessName) ? CoreText.T("Core.SubTitle.UnknownProcess") : ProcessName;
+            var running = IsRunning ? CoreText.T("Core.SubTitle.Running") : CoreText.T("Core.SubTitle.NotRunning");
+            return CoreText.T("Core.SubTitle.Format", process, running);
         }
+    }
+
+    /// <summary>语言切换后刷新所有本地化文本（状态与副标题）。</summary>
+    internal void RaiseLocalizedChanged()
+    {
+        OnPropertyChanged(nameof(StateText));
+        OnPropertyChanged(nameof(SubTitle));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

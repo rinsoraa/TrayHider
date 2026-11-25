@@ -26,15 +26,27 @@ internal static class IconExtractor
     private const int IconPixelSize = 32;
 
     /// <summary>
-    /// 图标缓存上限。WeakReference 保证列表条目被移除后位图能真正回收；
-    /// 上限只是防止极端情况下字典无限膨胀（本机 121 个托盘条目对应 101 个 exe，
-    /// 因此留到 128，避免"图标数略多于上限"时把缓存反复清空）。
+    /// 图标缓存上限。注意：这里存的是 <see cref="WeakReference{T}"/>，**不会**让位图一直活着
+    /// （位图由 TrayIconItem.Icon 持有），所以上限只影响字典自身的体积与重复解码次数。
+    ///
+    /// 实测结论（HeapBench，见 build/memprobe）：把上限从 128 降到 64 之后，
+    ///   · 内存：托管堆只省下几十 KB（字典项本身），而且位图不受影响 —— 基本没有收益；
+    ///   · CPU：120 个 exe 的场景下 5 轮取图标就出现 341 次淘汰、命中率掉到 43.8%，
+    ///     每多一次未命中就要重新 ExtractAssociatedIcon + PNG 解码（本机单次约 16ms）。
+    /// 因此**保留 128**，不再往下调：缓存是弱引用，不构成内存压力，调小只有坏处。
+    /// 真正的省内存点在 MemoryTrimmer（清缓存 + GC + 工作集裁剪）。
     /// </summary>
     private const int MaxCachedIcons = 128;
 
     private static readonly object CacheLock = new();
     private static readonly Dictionary<string, WeakReference<ImageSource>> IconCache =
         new(StringComparer.OrdinalIgnoreCase);
+
+    // ---- 命中率统计（只为诊断/实测服务，不参与业务逻辑）----
+    private static long _cacheHits;
+    private static long _cacheMisses;
+    private static long _evictions;
+    private static long _clears;
 
     /// <summary>
     /// 从可执行文件提取图标（带缓存）。
@@ -49,9 +61,16 @@ internal static class IconExtractor
         {
             if (IconCache.TryGetValue(executablePath, out var weak))
             {
-                if (weak.TryGetTarget(out var cached)) return cached;
+                if (weak.TryGetTarget(out var cached))
+                {
+                    _cacheHits++;
+                    return cached;
+                }
+
                 IconCache.Remove(executablePath);   // 已被回收，去掉空壳
             }
+
+            _cacheMisses++;
         }
 
         if (!File.Exists(executablePath)) return null;
@@ -88,6 +107,48 @@ internal static class IconExtractor
         IconCache[executablePath] = new WeakReference<ImageSource>(image);
     }
 
+    /// <summary>
+    /// 清空图标缓存（MemoryTrimmer 在空闲裁剪时调用）。
+    /// 缓存本身是弱引用，不会"保住"位图；清空的意义是：
+    ///   · 丢掉已经被回收的空壳条目，让字典立刻变小；
+    ///   · 对于已经从列表里移除的图标，下一次 GC 能把位图真正回收（不再有 WeakReference 包装残留）。
+    /// 清空后下一次取图标会重新解码一次（几十微秒级），代价可接受。
+    /// </summary>
+    public static void Clear()
+    {
+        lock (CacheLock)
+        {
+            IconCache.Clear();
+            _clears++;
+        }
+    }
+
+    /// <summary>当前缓存条目数（诊断用）。</summary>
+    internal static int CachedIconCount
+    {
+        get
+        {
+            lock (CacheLock)
+            {
+                return IconCache.Count;
+            }
+        }
+    }
+
+    /// <summary>取一份缓存统计快照（命中/未命中/淘汰/清空次数，诊断与实测用）。</summary>
+    internal static IconCacheStats GetCacheStats()
+    {
+        lock (CacheLock)
+        {
+            return new IconCacheStats(
+                IconCache.Count,
+                _cacheHits,
+                _cacheMisses,
+                _evictions,
+                _clears);
+        }
+    }
+
     /// <summary>摘掉已经被 GC 回收的缓存条目。</summary>
     private static void TrimDeadEntries()
     {
@@ -114,7 +175,11 @@ internal static class IconExtractor
             break;
         }
 
-        if (victim != null) IconCache.Remove(victim);
+        if (victim != null)
+        {
+            IconCache.Remove(victim);
+            _evictions++;
+        }
     }
 
     /// <summary>
@@ -376,4 +441,42 @@ internal static class IconExtractor
          | ((uint)data[offset + 1] << 16)
          | ((uint)data[offset + 2] << 8)
          | data[offset + 3];
+}
+
+/// <summary>图标缓存统计快照（诊断/实测用）。</summary>
+internal readonly struct IconCacheStats
+{
+    public IconCacheStats(int count, long hits, long misses, long evictions, long clears)
+    {
+        Count = count;
+        Hits = hits;
+        Misses = misses;
+        Evictions = evictions;
+        Clears = clears;
+    }
+
+    /// <summary>当前缓存条目数。</summary>
+    public int Count { get; }
+
+    /// <summary>命中次数。</summary>
+    public long Hits { get; }
+
+    /// <summary>未命中次数（需要重新解码）。</summary>
+    public long Misses { get; }
+
+    /// <summary>因超过上限被淘汰的次数。</summary>
+    public long Evictions { get; }
+
+    /// <summary>整体清空次数（MemoryTrimmer 触发）。</summary>
+    public long Clears { get; }
+
+    /// <summary>命中率（0~1；没有任何请求时为 0）。</summary>
+    public double HitRate
+    {
+        get
+        {
+            var total = Hits + Misses;
+            return total == 0 ? 0 : Hits / (double)total;
+        }
+    }
 }

@@ -80,22 +80,22 @@ public static class HotkeyCapture
     {
         if (virtualKey <= 0)
         {
-            return "没有识别到主键，请再按一个字母、数字或功能键。";
+            return Loc.T("Hotkey.Error.NoKey");
         }
 
         if ((modifiers & AllModifiers) == 0)
         {
-            return "快捷键至少需要一个修饰键（Ctrl / Alt / Shift / Win）。需要 Win 参与时，请先勾选下方的「附加 Win」再按主键。";
+            return Loc.T("Hotkey.Error.NoModifier");
         }
 
         if (IsModifierOnlyKey(virtualKey))
         {
-            return "只按下了修饰键，请再按一个字母、数字或功能键。";
+            return Loc.T("Hotkey.Error.ModifierOnly");
         }
 
         if (IsSystemReserved(modifiers, virtualKey))
         {
-            return "这个组合被 Windows 自己保留（例如 Win + L / Win + D / Win + E / Win + Tab），本软件无法接管，请换一个组合。";
+            return Loc.T("Hotkey.Error.SystemReserved");
         }
 
         return null;

@@ -98,7 +98,7 @@ public partial class MainWindow : Window
             Hide();
             _trayViewModel.SetWindowVisible(false);
             _windowViewModel.SetWindowVisible(false);
-            _trayViewModel.StatusText = "已最小化到托盘，隐藏守护继续运行";
+            _trayViewModel.StatusText = Loc.T("Main.Status.MinimizedToTray");
             return;
         }
 
@@ -147,7 +147,7 @@ public partial class MainWindow : Window
         Hide();
         _trayViewModel.SetWindowVisible(false);
         _windowViewModel.SetWindowVisible(false);
-        _trayViewModel.StatusText = "已最小化到托盘，隐藏守护继续运行";
+        _trayViewModel.StatusText = Loc.T("Main.Status.MinimizedToTray");
     }
 
     // ---------------------------------------------------------------- 分区切换
@@ -288,19 +288,19 @@ public partial class MainWindow : Window
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
         _trayViewModel.SelectAll();
-        _trayViewModel.StatusText = "已勾选全部图标";
+        _trayViewModel.StatusText = Loc.T("Main.Status.AllChecked");
     }
 
     private void Invert_Click(object sender, RoutedEventArgs e)
     {
         _trayViewModel.InvertSelection();
-        _trayViewModel.StatusText = "已反选";
+        _trayViewModel.StatusText = Loc.T("Main.Status.Inverted");
     }
 
     private void ClearSelection_Click(object sender, RoutedEventArgs e)
     {
         _trayViewModel.ClearSelection();
-        _trayViewModel.StatusText = "已取消所有勾选";
+        _trayViewModel.StatusText = Loc.T("Main.Status.NoneChecked");
     }
 
     private void HideSelected_Click(object sender, RoutedEventArgs e)
@@ -312,8 +312,8 @@ public partial class MainWindow : Window
     private void HideAll_Click(object sender, RoutedEventArgs e)
     {
         var result = System.Windows.MessageBox.Show(this,
-            "确定要隐藏全部托盘图标吗？",
-            "确认全部隐藏",
+            Loc.T("Main.Confirm.HideAllTray.Text"),
+            Loc.T("Main.Confirm.HideAllTray.Title"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
 
@@ -331,19 +331,19 @@ public partial class MainWindow : Window
     private void WindowSelectAll_Click(object sender, RoutedEventArgs e)
     {
         _windowViewModel.SelectAll();
-        _windowViewModel.StatusText = "已勾选全部窗口";
+        _windowViewModel.StatusText = Loc.T("Main.Status.AllChecked");
     }
 
     private void WindowInvert_Click(object sender, RoutedEventArgs e)
     {
         _windowViewModel.InvertSelection();
-        _windowViewModel.StatusText = "已反选";
+        _windowViewModel.StatusText = Loc.T("Main.Status.Inverted");
     }
 
     private void WindowClearSelection_Click(object sender, RoutedEventArgs e)
     {
         _windowViewModel.ClearSelection();
-        _windowViewModel.StatusText = "已取消所有勾选";
+        _windowViewModel.StatusText = Loc.T("Main.Status.NoneChecked");
     }
 
     private void WindowHideSelected_Click(object sender, RoutedEventArgs e)
@@ -355,8 +355,8 @@ public partial class MainWindow : Window
     private void WindowHideAll_Click(object sender, RoutedEventArgs e)
     {
         var result = System.Windows.MessageBox.Show(this,
-            "确定要把全部窗口隐藏到托盘吗？\n被隐藏的程序仍在后台运行，可按快捷键或托盘图标恢复。",
-            "确认全部隐藏",
+            Loc.T("Main.Confirm.HideAllWindows.Text"),
+            Loc.T("Main.Confirm.HideAllTray.Title"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
 
