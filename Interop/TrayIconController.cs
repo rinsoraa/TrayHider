@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Drawing;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using static TrayHider.Interop.NativeMethods;
@@ -8,45 +6,23 @@ using static TrayHider.Interop.NativeMethods;
 namespace TrayHider.Interop;
 
 /// <summary>
-/// 跨进程控制托盘图标 —— 通过 Shell_NotifyIcon 的 NIM_DELETE / NIM_MODIFY / NIM_ADD。
-///
-/// 这是"彻底隐藏"的正确机制（与 gohide、以及本软件"隐藏自身托盘图标"
-/// 选项使用的 NotifyIcon.Visible=false 是同一个底层 API）：
-///   NIM_DELETE 让 Shell 立即把图标从托盘与溢出面板中移除，进程照常运行。
-///
-/// 恢复（显示）策略 —— 关键点，也是 issue#1 的根因：
-///   NOTIFYICONDATA 是"注册方"的契约：Shell 把这个图标的鼠标消息投给注册时给出的
-///   hWnd + uCallbackMessage。本进程无法伪造出目标程序自己的回调消息号，
-///   一旦由本进程用 NIM_ADD 重建图标，图标看得见但鼠标消息会被投到目标程序
-///   根本不处理的回调上 —— 右键菜单/双击全部失效（只有重启 explorer，
-///   让各程序收到 TaskbarCreated 用自己的参数重新注册，才会恢复正常）。
-///   因此恢复时优先"让目标程序自己重新注册"：向目标进程投递 TaskbarCreated，
-///   再用 NIM_MODIFY 短轮询探测图标是否回归；只有在目标程序不响应时才降级
-///   用本进程 NIM_ADD 兜底（见 <see cref="RecreateIconFallback"/>）。
+/// 使用 NIM_MODIFY + NIF_STATE 变更 NIS_HIDDEN，保留所有者的原注册、版本与点击回调。
+/// 新隐藏操作不会删除注册。旧版已删除的注册无法从注册表推导回调，只能请原程序自己重建。
 /// </summary>
 internal static class TrayIconController
 {
-    private const int NIM_ADD = 0;
     private const int NIM_MODIFY = 1;
-    private const int NIM_DELETE = 2;
 
-    private const uint NIF_MESSAGE = 0x1;
-    private const uint NIF_ICON = 0x2;
-    private const uint NIF_TIP = 0x4;
+    private const uint NIF_STATE = 0x8;
     private const uint NIF_GUID = 0x20;
 
-    /// <summary>
-    /// 降级重建（<see cref="RecreateIconFallback"/>）使用的回调消息号。
-    /// Shell 会把该图标的鼠标消息投到目标窗口的这条消息上，而目标程序并不处理它，
-    /// 所以这条路径下的图标"看得见但点不动" —— 这正是 issue#1 的来源。
-    /// </summary>
-    private const uint FallbackCallbackMessage = 0x8001;
+    /// <summary>图标状态位：隐藏（不在通知区域显示），但注册仍然存在。</summary>
+    private const uint NIS_HIDDEN = 0x1;
 
     /// <summary>
     /// "TaskbarCreated" 注册消息。explorer 重启后会用 HWND_BROADCAST 广播它，
     /// 各程序收到后用自己的 hWnd/uID/uCallbackMessage 重新 NIM_ADD，托盘随之恢复。
-    /// 本软件恢复图标时也投递这条消息（点对点 PostMessage），效果等同"只重启这一个小程序"，
-    /// 是让右键菜单保持有效的唯一可靠办法。
+    /// 仅当前代备份的原注册已经不在时，请对应进程自己重建。成功投递不等于图标已经恢复。
     /// </summary>
     private static readonly uint WmTaskbarCreated = RegisterWindowMessage("TaskbarCreated");
 
@@ -88,28 +64,96 @@ internal static class TrayIconController
         public IntPtr hBalloonIcon;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NOTIFYICONIDENTIFIER
+    {
+        public uint cbSize;
+        public IntPtr hWnd;
+        public uint uID;
+        public Guid guidItem;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int left;
+        public int top;
+        public int right;
+        public int bottom;
+    }
+
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern bool Shell_NotifyIcon(int dwMessage, ref NOTIFYICONDATAW lpData);
 
-    // ---------------------------------------------------------------- 隐藏
+    /// <summary>文档化只读 API：查询图标在通知区域的屏幕矩形（不在显示状态时返回 HRESULT 错误）。</summary>
+    [DllImport("shell32.dll")]
+    private static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out RECT rect);
 
-    /// <summary>彻底隐藏：让 Shell 删除目标图标（NIM_DELETE）。不终止进程。</summary>
-    public static bool HideIcon(IntPtr hWnd, TrayIconIdentity identity)
+    // ---------------------------------------------------------------- 非破坏性隐藏（首选）
+
+    /// <summary>
+    /// 非破坏性隐藏：NIM_MODIFY + NIF_STATE，把 dwState 的 NIS_HIDDEN 置位。
+    /// 图标从通知区域消失，但 Shell 里的注册、目标程序的 hWnd/uID/uCallbackMessage 全都保留，
+    /// 因此恢复只要清除状态位即可，右键菜单/双击不会失效。
+    /// </summary>
+    /// <returns>Shell 是否接受。FALSE 表示该图标不支持状态隐藏，调用方应如实报"未隐藏"。</returns>
+    public static bool TryHideByState(IntPtr hWnd, TrayIconIdentity identity)
+        => SetHiddenState(hWnd, identity, hidden: true);
+
+    /// <summary>
+    /// 非破坏性恢复：清除 NIS_HIDDEN 状态位。
+    /// 返回 FALSE 说明这个图标已经不在 Shell 里（例如程序重启过），
+    /// 调用方需要走"让程序自己重新注册"的旧路径。
+    /// </summary>
+    public static bool TryShowByState(IntPtr hWnd, TrayIconIdentity identity)
+        => SetHiddenState(hWnd, identity, hidden: false);
+
+    private static bool SetHiddenState(IntPtr hWnd, TrayIconIdentity identity, bool hidden)
     {
+        if (hWnd == IntPtr.Zero) return false;
+
         try
         {
             var nid = new NOTIFYICONDATAW
             {
                 cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
                 hWnd = hWnd,
+                uID = identity.Guid.HasValue ? 0 : identity.Uid.GetValueOrDefault(),
+                uFlags = NIF_STATE | (identity.Guid.HasValue ? NIF_GUID : 0),
+                dwState = hidden ? NIS_HIDDEN : 0,
+                dwStateMask = NIS_HIDDEN,
+                szTip = string.Empty
+            };
+            if (identity.Guid.HasValue) nid.guidItem = identity.Guid.Value;
+            return Shell_NotifyIcon(NIM_MODIFY, ref nid);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 该图标当前是否正显示在通知区域（文档化只读 API Shell_NotifyIconGetRect）。
+    /// 判定依据：Shell 返回 S_OK 且矩形非空 = 正在显示；返回任何错误（含图标在溢出面板里、
+    /// 或已被隐藏/删除）= 未显示。实测：置位 NIS_HIDDEN 后本调用立即变为失败、清除后立即恢复。
+    /// </summary>
+    public static bool IsIconDisplayed(IntPtr hWnd, TrayIconIdentity identity)
+    {
+        if (hWnd == IntPtr.Zero) return false;
+
+        try
+        {
+            var id = new NOTIFYICONIDENTIFIER
+            {
+                cbSize = (uint)Marshal.SizeOf<NOTIFYICONIDENTIFIER>(),
+                hWnd = hWnd,
                 uID = identity.Guid.HasValue ? 0 : identity.Uid.GetValueOrDefault()
             };
-            if (identity.Guid.HasValue)
-            {
-                nid.uFlags = NIF_GUID;
-                nid.guidItem = identity.Guid.Value;
-            }
-            return Shell_NotifyIcon(NIM_DELETE, ref nid);
+            if (identity.Guid.HasValue) id.guidItem = identity.Guid.Value;
+
+            if (Shell_NotifyIconGetRect(ref id, out var rect) != 0) return false;
+            return rect.right > rect.left && rect.bottom > rect.top;
         }
         catch
         {
@@ -163,40 +207,35 @@ internal static class TrayIconController
     /// <summary>窗口句柄是否仍然有效（进程重启后旧句柄会失效）。</summary>
     public static bool IsWindowAlive(IntPtr hwnd) => hwnd != IntPtr.Zero && IsWindow(hwnd);
 
-    /// <summary>
-    /// 【兜底路径，仅在目标程序不响应 TaskbarCreated 时使用】
-    /// 由本进程伪造 NOTIFYICONDATA 用 NIM_ADD 把图标加回来 —— 只能保证"图标可见"：
-    ///   hWnd 借用目标程序的托盘窗口，uCallbackMessage 固定为 0x8001，
-    ///   目标程序并不处理这条回调消息，因此右键菜单/双击可能失效，
-    ///   需要重启该程序（它自己会用正确的回调重新注册）才能彻底恢复。
-    /// 调用方必须在界面上把这一状态明确告知用户（见 TrayIconItem.CallbackDegraded）。
-    /// </summary>
-    public static bool RecreateIconFallback(IntPtr hWnd, TrayIconIdentity identity, byte[]? iconSnapshot, string tooltip)
+    /// <summary>窗口所属进程号（失败/无效窗口返回 0）。用于确认缓存的窗口句柄仍属于目标进程。</summary>
+    public static int GetWindowProcessId(IntPtr hwnd)
     {
-        IconHandle icon = default;
+        if (hwnd == IntPtr.Zero) return 0;
+
         try
         {
-            icon = LoadIconFromSnapshot(iconSnapshot);
-            var nid = new NOTIFYICONDATAW
-            {
-                cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
-                hWnd = hWnd,
-                uID = identity.Guid.HasValue ? 0 : identity.Uid.GetValueOrDefault(),
-                uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | (identity.Guid.HasValue ? NIF_GUID : 0),
-                uCallbackMessage = FallbackCallbackMessage,
-                hIcon = icon.Handle,
-                szTip = string.IsNullOrEmpty(tooltip) ? "TrayHider" : tooltip
-            };
-            if (identity.Guid.HasValue) nid.guidItem = identity.Guid.Value;
-            return Shell_NotifyIcon(NIM_ADD, ref nid);
+            GetWindowThreadProcessId(hwnd, out var pid);
+            return pid;
         }
         catch
         {
-            return false;
+            return 0;
         }
-        finally
+    }
+
+    /// <summary>进程名（读不到返回空串）。用于兜住"进程号被系统复用"的情况。</summary>
+    public static string GetProcessName(int processId)
+    {
+        if (processId <= 0) return string.Empty;
+
+        try
         {
-            if (icon.OwnsHandle) DestroyIcon(icon.Handle);
+            using var process = Process.GetProcessById(processId);
+            return process.ProcessName;
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 
@@ -406,40 +445,9 @@ internal static class TrayIconController
         return pids;
     }
 
-    // ---------------------------------------------------------------- 图标重建
-
-    /// <summary>从注册表 IconSnapshot 字节重建图标句柄，失败回退到系统共享图标。</summary>
-    private static IconHandle LoadIconFromSnapshot(byte[]? snapshot)
-    {
-        try
-        {
-            if (snapshot is { Length: > 8 })
-            {
-                using var ms = new MemoryStream(snapshot);
-                using var bmp = new Bitmap(ms);
-                return new IconHandle(bmp.GetHicon(), OwnsHandle: true);
-            }
-        }
-        catch
-        {
-            // 解码失败（如裸 DIB）则回退
-        }
-
-        return new IconHandle(LoadIcon(IntPtr.Zero, (IntPtr)32512), OwnsHandle: false); // IDI_APPLICATION
-    }
-
-    // ---------------------------------------------------------------- P/Invoke
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
-
-    [DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr hIcon);
 }
 
 public readonly record struct TrayIconIdentity(uint? Uid, Guid? Guid)
 {
     public bool IsValid => Guid.HasValue || Uid.HasValue;
 }
-
-internal readonly record struct IconHandle(IntPtr Handle, bool OwnsHandle);

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
+using TrayHider.Interop;
 
 namespace TrayHider.Models;
 
@@ -71,6 +72,20 @@ public sealed class TrayIconItem : INotifyPropertyChanged
         get => _isSelected;
         set { if (_isSelected != value) { _isSelected = value; OnPropertyChanged(); } }
     }
+
+    /// <summary>
+    /// 隐藏该图标时用的方式（非破坏性状态隐藏 / 破坏性删除）。
+    /// 决定恢复走哪条路径：State → 清除状态位即可，回调不受影响；Delete → 需要程序自己重新注册。
+    /// 由 MainViewModel 在隐藏/恢复时维护，随隐藏备份一起持久化。
+    /// </summary>
+    public TrayHideMode HideMode { get; set; } = TrayHideMode.Delete;
+
+    /// <summary>
+    /// 已经确认"这个程序不响应托盘重建、恢复不了"。
+    /// 置位后守护逻辑不再反复重隐它 —— 否则程序自己重启后图标又被藏掉，
+    /// 用户永远等不到它回来。仅运行时状态，不持久化。
+    /// </summary>
+    public bool RestoreBlocked { get; set; }
 
     /// <summary>当前是否已处于隐藏状态。</summary>
     public bool IsHidden

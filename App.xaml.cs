@@ -24,8 +24,6 @@ namespace TrayHider;
 /// </summary>
 public partial class App : Application
 {
-    /// <summary>快捷键 ID 基址，实际 ID = 基址 + 动作下标。</summary>
-    private const int HotkeyIdBase = 0x5452;
 
     private const string MutexName = "Global\\TrayHider.SingleInstance.v1";
 
@@ -58,11 +56,7 @@ public partial class App : Application
     /// <summary>回执魔数（"TH"），用于确认消息被真正处理。</summary>
     private const int ActivateMagic = 0x5448;
 
-    /// <summary>快捷键 ID → 动作名。</summary>
-    private readonly Dictionary<int, string> _hotkeyActionById = new();
-
-    /// <summary>当前已成功注册的动作。</summary>
-    private readonly HashSet<string> _registeredHotkeyActions = new(StringComparer.Ordinal);
+    private GlobalHotkeyManager? _hotkeys;
 
     private System.Threading.Mutex? _mutex;
     private MainWindow? _mainWindow;
@@ -80,8 +74,7 @@ public partial class App : Application
     private EventWaitHandle? _listenerShutdown;
     private System.Threading.Thread? _activateListener;
 
-    // ---- 自身托盘菜单（显式定位） ----
-    private ContextMenuStrip? _trayMenu;
+    // ---- 自身托盘菜单：改为 TrayPopupMenu（原生 TrackPopupMenuEx），不再持有 WinForms 菜单 ----
 
     /// <summary>当前配置（设置界面读取快捷键文本、窗口选项时使用）。</summary>
     public AppConfig Config => _config;
@@ -487,107 +480,37 @@ public partial class App : Application
         _hotkeySource = HwndSource.FromHwnd(handle);
         _hotkeySource?.AddHook(WndProc);
         _hotkeyHandle = handle;
-        RegisterAllHotkeys();
-    }
-
-    /// <summary>注册全部快捷键；个别失败不影响其它动作，只在状态栏提示。</summary>
-    private void RegisterAllHotkeys()
-    {
-        if (_hotkeyHandle == IntPtr.Zero) return;
-
-        UnregisterAllHotkeys();
-        _hotkeyActionById.Clear();
-
-        var failed = new List<string>();
-        for (var i = 0; i < HotkeyActions.All.Length; i++)
-        {
-            var action = HotkeyActions.All[i];
-            var id = HotkeyIdBase + i;
-            _hotkeyActionById[id] = action;
-
-            if (TryRegisterOne(id, _config.GetHotkey(action)))
-            {
-                _registeredHotkeyActions.Add(action);
-            }
-            else
-            {
-                failed.Add(HotkeyCatalog.Title(action));
-            }
-        }
-
+        _hotkeys = new GlobalHotkeyManager(
+            (id, binding) => NativeMethods.RegisterHotKey(handle, id, (uint)binding.Modifiers | NativeMethods.MOD_NOREPEAT, (uint)binding.VirtualKey),
+            id => NativeMethods.UnregisterHotKey(handle, id));
+        var failed = _hotkeys.RegisterConfigured(_config);
         if (failed.Count > 0)
-        {
-            _viewModel?.SetStatus($"快捷键注册失败（可能被其他软件占用）：{string.Join("、", failed)}；可在设置中修改。");
-        }
+            _viewModel?.SetStatus($"快捷键注册失败（可能被系统或其他软件占用）：{string.Join("、", failed)}；可在设置中修改。");
     }
 
-    private bool TryRegisterOne(int id, HotkeyBinding binding)
+    private bool TryApplyHotkeys(Dictionary<string, HotkeyBinding> changes, out string error, List<string>? unavailableOnReset = null)
     {
-        if (_hotkeyHandle == IntPtr.Zero || binding is not { IsValid: true }) return false;
-
-        var mods = (uint)binding.Modifiers | NativeMethods.MOD_NOREPEAT;
-        return NativeMethods.RegisterHotKey(_hotkeyHandle, id, mods, (uint)binding.VirtualKey);
+        error = "快捷键窗口尚未就绪。";
+        if (_hotkeys == null || !_hotkeys.TryApply(_config, changes, out error, unavailableOnReset)) return false;
+        _config.Save();
+        _viewModel?.NotifyHotkeyChanged();
+        _windowViewModel?.NotifyHotkeyChanged();
+        return true;
     }
 
-    private void UnregisterAllHotkeys()
-    {
-        if (_hotkeyHandle == IntPtr.Zero) return;
-
-        foreach (var id in _hotkeyActionById.Keys)
-        {
-            if (_registeredHotkeyActions.Contains(_hotkeyActionById[id]))
-            {
-                NativeMethods.UnregisterHotKey(_hotkeyHandle, id);
-            }
-        }
-
-        _registeredHotkeyActions.Clear();
-    }
-
-    /// <summary>
-    /// 设置并注册指定动作的快捷键。注册失败时回滚为原快捷键。
-    /// </summary>
     public bool TryUpdateHotkey(string action, int modifiers, int virtualKey)
+        => TryApplyHotkeys(new() { [action] = new() { Modifiers = modifiers, VirtualKey = virtualKey } }, out _);
+
+    public bool TryClearHotkey(string action) => TryApplyHotkeys(new() { [action] = new() }, out _);
+
+    public bool TryResetHotkeys(out string message)
     {
-        var index = Array.IndexOf(HotkeyActions.All, action);
-        if (index < 0 || _hotkeyHandle == IntPtr.Zero) return false;
-
-        var id = HotkeyIdBase + index;
-        var previous = _config.GetHotkey(action).Clone();
-        var candidate = new HotkeyBinding { Modifiers = modifiers & ~0x4000, VirtualKey = virtualKey };
-
-        _hotkeyActionById[id] = action;
-
-        // 先释放旧键，再尝试新键
-        if (_registeredHotkeyActions.Remove(action))
-        {
-            NativeMethods.UnregisterHotKey(_hotkeyHandle, id);
-        }
-
-        if (candidate.IsValid && TryRegisterOne(id, candidate))
-        {
-            _registeredHotkeyActions.Add(action);
-            _config.Hotkeys[action] = candidate;
-            _config.Save();
-            _viewModel?.NotifyHotkeyChanged();
-            return true;
-        }
-
-        // 回滚
-        if (TryRegisterOne(id, previous))
-        {
-            _registeredHotkeyActions.Add(action);
-        }
-        else
-        {
-            _viewModel?.SetStatus($"快捷键「{HotkeyCatalog.Title(action)}」恢复失败，请重新设置。");
-        }
-        return false;
+        var unavailable = new List<string>();
+        if (!TryApplyHotkeys(HotkeyBinding.CreateDefaults(), out message, unavailable)) return false;
+        if (unavailable.Count != 0)
+            message = "以下默认组合已被占用，已保存但暂不能触发：" + string.Join("、", unavailable) + "。可单独修改这几项。";
+        return true;
     }
-
-    /// <summary>兼容旧调用：等价于修改“唤出主窗口”的快捷键。</summary>
-    public bool TryUpdateHotkey(int modifiers, int virtualKey)
-        => TryUpdateHotkey(HotkeyActions.ShowMain, modifiers, virtualKey);
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
@@ -610,10 +533,17 @@ public partial class App : Application
             return new IntPtr(ActivateMagic);
         }
 
-        if (msg == NativeMethods.WM_HOTKEY && _hotkeyActionById.TryGetValue(wParam.ToInt32(), out var action))
+        if (msg == NativeMethods.WM_HOTKEY && _hotkeys != null)
         {
-            DispatchHotkey(action);
-            handled = true;
+            // 清空/换绑后可能还有旧消息在排队；ID 和实际组合同时一致才分发。
+            var bits = unchecked((uint)lParam.ToInt64());
+            var mods = (int)(bits & 0xF);
+            var vk = (int)(bits >> 16);
+            if (_hotkeys.TryMatch(wParam.ToInt32(), mods, vk, out var action))
+            {
+                handled = true;
+                if (_mainWindow?.TryCaptureRegisteredHotkey(mods, vk) != true) DispatchHotkey(action);
+            }
         }
         return IntPtr.Zero;
     }
@@ -669,44 +599,79 @@ public partial class App : Application
         {
             Text = "托盘图标管家",
             Icon = LoadAppIcon(),
-            Visible = true
+            Visible = true,
+            // 菜单改用原生 TrackPopupMenuEx（见 TrayPopupMenu）：不使用 WinForms 的自动弹菜单，
+            // 因为它的位置要经过 WinForms 内部的 DPI 换算，跨缩放显示器时容易漂。
+            ContextMenuStrip = null
         };
 
         _notifyIcon.DoubleClick += (_, _) => _mainWindow?.RestoreFromTray();
 
-        var menu = new ContextMenuStrip();
-
-        // 说明：ContextMenuStrip/ToolStrip 没有 AutoScaleMode（它继承 Control 而非 ContainerControl），
-        // 位置校正走启动时统一记录的光标兜底（见下方 Opening 处理）。
-        menu.ShowImageMargin = false;
-        menu.ShowCheckMargin = false;
-
-        menu.Items.Add("打开主窗口", null, (_, _) => _mainWindow?.RestoreFromTray());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("隐藏全部托盘图标", null, (_, _) => _viewModel?.HideAll());
-        menu.Items.Add("显示全部托盘图标", null, (_, _) => _viewModel?.RestoreAll());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("隐藏全部窗口", null, (_, _) => _windowViewModel?.HideAllWindows());
-        menu.Items.Add("显示全部窗口", null, (_, _) => _windowViewModel?.RestoreAllWindows());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("修复右键菜单失效的图标", null, (_, _) => RepairDegradedFromMenu());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("退出", null, (_, _) => ShutdownApp());
-
-        _trayMenu = menu;
-        _notifyIcon.ContextMenuStrip = menu;
-
-        // 菜单定位兜底：WinForms 在弹出前用 Cursor.Position 定位，
-        // 万一此刻光标坐标不可用（例如由键盘/自动化触发），把它拉回任务栏托盘一侧，
-        // 避免菜单出现在屏幕左上角之类的"错误位置"。
-        menu.Opening += (_, _) =>
+        // 右键：必须在 MouseUp 里同步弹菜单 —— 此刻"当前消息"就是 shell 投递的右键回调，
+        // TrayPopupMenu 用 GetMessagePos 才能拿到右击瞬间的物理像素坐标（不会因消息延迟而漂）。
+        _notifyIcon.MouseUp += (_, e) =>
         {
-            var point = Cursor.Position;
-            if (!IsPointOnAnyScreen(point))
-            {
-                Cursor.Position = DefaultTrayMenuPoint();
-            }
+            if (e.Button == MouseButtons.Right) ShowOwnTrayMenu();
         };
+    }
+
+    /// <summary>
+    /// 自身托盘图标的右键菜单：用原生 TrackPopupMenuEx 在右击位置（物理像素）弹出，
+    /// 全程不做 DPI 换算、不移动用户光标。菜单项与行为跟原 ContextMenuStrip 版本完全一致。
+    /// </summary>
+    private void ShowOwnTrayMenu()
+    {
+        const int commandOpenMainWindow = 1;
+        const int commandHideAllTrayIcons = 2;
+        const int commandShowAllTrayIcons = 3;
+        const int commandHideAllWindows = 4;
+        const int commandShowAllWindows = 5;
+        const int commandRepairIcons = 6;
+        const int commandExit = 7;
+
+        var command = TrayPopupMenu.Show(
+            new TrayPopupMenuItem { Text = "打开主窗口", CommandId = commandOpenMainWindow },
+            TrayPopupMenuItem.Separator,
+            new TrayPopupMenuItem { Text = "隐藏全部托盘图标", CommandId = commandHideAllTrayIcons },
+            new TrayPopupMenuItem { Text = "显示全部托盘图标", CommandId = commandShowAllTrayIcons },
+            TrayPopupMenuItem.Separator,
+            new TrayPopupMenuItem { Text = "隐藏全部窗口", CommandId = commandHideAllWindows },
+            new TrayPopupMenuItem { Text = "显示全部窗口", CommandId = commandShowAllWindows },
+            TrayPopupMenuItem.Separator,
+            new TrayPopupMenuItem { Text = "修复右键菜单失效的图标", CommandId = commandRepairIcons },
+            TrayPopupMenuItem.Separator,
+            new TrayPopupMenuItem { Text = "退出", CommandId = commandExit });
+
+        switch (command)
+        {
+            case commandOpenMainWindow:
+                _mainWindow?.RestoreFromTray();
+                break;
+
+            case commandHideAllTrayIcons:
+                _viewModel?.HideAll();
+                break;
+
+            case commandShowAllTrayIcons:
+                _viewModel?.RestoreAll();
+                break;
+
+            case commandHideAllWindows:
+                _windowViewModel?.HideAllWindows();
+                break;
+
+            case commandShowAllWindows:
+                _windowViewModel?.RestoreAllWindows();
+                break;
+
+            case commandRepairIcons:
+                RepairDegradedFromMenu();
+                break;
+
+            case commandExit:
+                ShutdownApp();
+                break;
+        }
     }
 
     /// <summary>
@@ -732,7 +697,7 @@ public partial class App : Application
         if (_viewModel != null)
         {
             _viewModel.StatusText = hide
-                ? "本软件图标已隐藏，可用快捷键唤出主窗口"
+                ? _viewModel.SelfIconHint
                 : "本软件图标已显示在托盘";
         }
     }
@@ -740,29 +705,8 @@ public partial class App : Application
     /// <summary>托盘菜单里触发"修复右键菜单失效的图标"：重新让目标程序重建托盘图标。</summary>
     private void RepairDegradedFromMenu()
     {
-        if (_viewModel == null) return;
-
-        var repaired = _viewModel.RetryDegradedIcons();
-        _viewModel.SetStatus(repaired > 0
-            ? $"已修复 {repaired} 个图标的右键菜单"
-            : "没有需要修复的图标（若图标仍无响应，请重启对应程序）");
-    }
-
-    /// <summary>坐标是否落在任一屏幕范围内（用于判断拿到的光标位置是否可信）。</summary>
-    internal static bool IsPointOnAnyScreen(System.Drawing.Point point)
-    {
-        foreach (var screen in Screen.AllScreens)
-        {
-            if (screen.Bounds.Contains(point)) return true;
-        }
-        return false;
-    }
-
-    /// <summary>光标坐标不可信时的兜底菜单位置：主屏工作区右下角（任务栏托盘一侧）。</summary>
-    internal static System.Drawing.Point DefaultTrayMenuPoint()
-    {
-        var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1024, 768);
-        return new System.Drawing.Point(work.Right - 12, work.Bottom - 12);
+        // 显示 VM 的实际结果（包括仍需原程序重启的项），而不是把失败也报道成“没有需要修复”。
+        _viewModel?.RetryDegradedIcons();
     }
 
     private static Icon LoadAppIcon()
@@ -822,7 +766,7 @@ public partial class App : Application
 
         if (_hotkeySource != null && _hotkeyHandle != IntPtr.Zero)
         {
-            UnregisterAllHotkeys();
+            _hotkeys?.UnregisterAll();
         }
 
         // 退出时把被隐藏的窗口恢复，绝不把用户窗口留在隐藏状态
@@ -838,20 +782,19 @@ public partial class App : Application
         if (_notifyIcon != null)
         {
             _notifyIcon.Visible = false;
-            _notifyIcon.ContextMenuStrip = null;
             _notifyIcon.Dispose();
             _notifyIcon = null;
         }
 
+        // 释放原生菜单的宿主窗口（类注册 + 隐藏窗口），避免退出时残留 USER 句柄
         try
         {
-            _trayMenu?.Dispose();
+            TrayPopupMenu.ReleaseOwnerWindow();
         }
         catch
         {
-            // 忽略
+            // 忽略：退出流程不抛异常
         }
-        _trayMenu = null;
 
         try
         {

@@ -42,9 +42,14 @@ public sealed class HotkeyBinding
     public int Modifiers { get; set; }
     public int VirtualKey { get; set; }
 
-    /// <summary>是否有意义的绑定（至少一个修饰键且键码非 0）。</summary>
+    /// <summary>显式清空的绑定。缺少动作表示沿用默认值，(0,0) 则表示停用，重启不能补回。</summary>
     [JsonIgnore]
-    public bool IsValid => (Modifiers & 0x000F) != 0 && VirtualKey != 0;
+    public bool IsUnassigned => Modifiers == 0 && VirtualKey == 0;
+
+    /// <summary>有效组合：四种修饰键中的至少一种，加一个非修饰主键。</summary>
+    [JsonIgnore]
+    public bool IsValid => Modifiers is > 0 and <= HotkeyCapture.AllModifiers && VirtualKey is > 0 and < 0xFF
+        && !HotkeyCapture.IsModifierOnlyKey(VirtualKey);
 
     public HotkeyBinding Clone() => new() { Modifiers = Modifiers, VirtualKey = VirtualKey };
 
@@ -58,7 +63,7 @@ public sealed class HotkeyBinding
         if ((Modifiers & 0x0004) != 0) parts.Add("Shift");
 
         var key = VirtualKey == 0 ? Key.None : KeyInterop.KeyFromVirtualKey(VirtualKey);
-        parts.Add(key == Key.None ? "未设置" : key.ToString());
+        parts.Add(key == Key.None ? HotkeyCatalog.UnassignedText : key.ToString());
         return string.Join(" + ", parts);
     }
 
@@ -79,6 +84,15 @@ public sealed class HotkeyBinding
 /// </summary>
 public sealed class AppConfig
 {
+    // 只有 Load() 载入的真实配置或显式传入路径的实例才能落盘。
+    // 普通 new / FromJson 只表示内存数据，绝不能自动指向用户的 Roaming 目录。
+    private string? _savePath;
+
+    public AppConfig() { }
+
+    // 同一套持久化逻辑也能用于隔离配置；测试中的回归绝不能写入真实用户目录。
+    internal AppConfig(string savePath) => _savePath = Path.GetFullPath(savePath);
+
     /// <summary>
     /// 旧版字段：仅存被隐藏图标的子键名（当时用 IsPromoted=0 隐藏）。
     /// 新版改用删除子键的方式彻底隐藏，此字段仅用于一次性迁移，迁移后清空。
@@ -111,7 +125,7 @@ public sealed class AppConfig
     /// 全部全局快捷键，键为 <see cref="HotkeyActions"/> 中的动作名。
     /// 缺失的动作会在 <see cref="Normalize"/> 中补默认值。
     /// </summary>
-    public Dictionary<string, HotkeyBinding> Hotkeys { get; set; } = HotkeyBinding.CreateDefaults();
+    public Dictionary<string, HotkeyBinding> Hotkeys { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>关闭窗口时最小化到托盘而非退出。</summary>
     public bool MinimizeToTrayOnClose { get; set; } = true;
@@ -131,23 +145,17 @@ public sealed class AppConfig
     /// <summary>窗口列表的刷新间隔（毫秒）。</summary>
     public int WindowRefreshIntervalMs { get; set; } = 3000;
 
-    /// <summary>
-    /// 已知"不响应系统托盘重建"的程序（进程名，不含 .exe）。
-    ///
-    /// 这类程序的图标被隐藏后，再显示时只能由本软件伪造注册，表现为"图标回来了但左右键都没反应"。
-    /// 本集合在恢复失败时自动学习（并落盘），下次隐藏同一个程序时先给出明确确认，
-    /// 避免用户以为程序坏了；后续恢复成功会自动把它移出集合。
-    /// </summary>
+    /// <summary>旧版记录中已知不响应 TaskbarCreated 的程序（进程名，不含 .exe）。
+    /// 新隐藏不依赖该消息；名单只记录旧注册的恢复情况，不用于判定状态位操作是否成功。</summary>
     public List<string> RebuildUnsupported { get; set; } = new();
 
-    /// <summary>
-    /// 预置的"已知不支持托盘重建"程序（实测：火绒安全软件托盘、NVIDIA 容器进程、腾讯反作弊托盘）。
-    /// 名单会在运行时自动学习/撤销，这里只是让新用户第一次隐藏这些程序时就能收到提示，
-    /// 不用先踩一次"图标回来了但点不动"的坑。
-    /// </summary>
+    /// <summary>兼容名单的迁移版本，与应用版本号无关。</summary>
+    public int RebuildSeedRevision { get; set; }
+
+    /// <summary>已报告不响应托盘重建的进程。用于旧备份的处理，不是删除原图标的许可。</summary>
     internal static readonly string[] KnownUnsupportedSeed =
     {
-        "HipsTray", "nvcontainer", "NVDisplay.Container", "ACE-Tray"
+        "HipsTray", "nvcontainer", "NVDisplay.Container", "ACE-Tray", "WitchDrawer"
     };
 
     // ---------------------------------------------------------------- 读写
@@ -164,19 +172,17 @@ public sealed class AppConfig
 
     public static string ConfigPath => Path.Combine(ConfigDirectory, "config.json");
 
-    public static AppConfig Load()
+    public static AppConfig Load() => Load(ConfigPath);
+
+    internal static AppConfig Load(string path)
     {
         try
         {
-            if (File.Exists(ConfigPath))
+            if (File.Exists(path))
             {
-                var json = File.ReadAllText(ConfigPath);
-                var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
-                if (config != null)
-                {
-                    config.Normalize();
-                    return config;
-                }
+                var config = FromJson(File.ReadAllText(path));
+                config._savePath = Path.GetFullPath(path);
+                return config;
             }
         }
         catch
@@ -184,26 +190,44 @@ public sealed class AppConfig
             // 配置损坏时回退到默认值，不影响启动
         }
 
-        var fresh = new AppConfig();
+        var fresh = new AppConfig(path);
         fresh.Normalize();
         return fresh;
     }
 
     public void Save()
     {
+        if (_savePath is not { } path) return;
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            // 旧字段与多动作表保持同步，保证回退到旧版本时快捷键不丢
-            SyncLegacyHotkeyFields();
-
-            Directory.CreateDirectory(ConfigDirectory);
-            var json = JsonSerializer.Serialize(this, JsonOptions);
-            File.WriteAllText(ConfigPath, json);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(temp, ToJson());
+            // 在同一目录完成替换。保存失败不截断原配置；保存成功仍能找回上一版。
+            if (File.Exists(path)) File.Replace(temp, path, path + ".bak");
+            else File.Move(temp, path);
         }
         catch
         {
-            // 写入失败不应导致崩溃
+            // 文件不可写时保持原配置，不影响当前进程运行。
         }
+        finally
+        {
+            try { File.Delete(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    internal static AppConfig FromJson(string json)
+    {
+        var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new();
+        config.Normalize();
+        return config;
+    }
+
+    internal string ToJson()
+    {
+        SyncLegacyHotkeyFields();
+        return JsonSerializer.Serialize(this, JsonOptions);
     }
 
     /// <summary>取指定动作的快捷键（缺失时返回默认值，不会返回 null）。</summary>
@@ -241,8 +265,14 @@ public sealed class AppConfig
         }
         RebuildUnsupported.RemoveAll(string.IsNullOrEmpty);
 
-        // 空名单时预置已知样本（用户后续的隐藏/恢复会继续自动学习或撤销）
-        if (RebuildUnsupported.Count == 0) RebuildUnsupported.AddRange(KnownUnsupportedSeed);
+        // v1.2.1 没有名单版本号。升级时保留已学习名单、补入新样本；不在每次启动时重加已撤销的条目。
+        if (RebuildSeedRevision < 1)
+        {
+            if (RebuildUnsupported.Count == 0) RebuildUnsupported.AddRange(KnownUnsupportedSeed);
+            else if (!RebuildUnsupported.Contains("WitchDrawer", StringComparer.OrdinalIgnoreCase))
+                RebuildUnsupported.Add("WitchDrawer");
+            RebuildSeedRevision = 1;
+        }
 
         // ---- 快捷键：旧版单快捷键 → 多动作表（向后兼容，旧配置的自定义快捷键不会丢）----
         var legacyModifiers = HotkeyModifiers & ~0x4000;
@@ -275,7 +305,7 @@ public sealed class AppConfig
 
             // 清理非法值：去掉 MOD_NOREPEAT（由注册时统一追加）、无修饰键、键码为 0
             binding.Modifiers &= ~0x4000;
-            if (!binding.IsValid) Hotkeys[action] = defaults[action];
+            if (!binding.IsUnassigned && !binding.IsValid) Hotkeys[action] = defaults[action];
         }
 
         SyncLegacyHotkeyFields();

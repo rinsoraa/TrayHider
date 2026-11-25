@@ -220,6 +220,7 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
@@ -245,6 +246,17 @@
                                         </Border>
 
                                         <Button Grid.Column="2"
+                                                Content="×"
+                                                Style="{StaticResource StandardButton}"
+                                                MinWidth="30"
+                                                Padding="8,3"
+                                                Margin="0,0,8,0"
+                                                ToolTip="{Binding ClearTip}"
+                                                Visibility="{Binding ClearButtonVisibility}"
+                                                VerticalAlignment="Center"
+                                                Click="HotkeyClear_Click" />
+
+                                        <Button Grid.Column="3"
                                                 Content="{Binding ButtonText}"
                                                 Style="{StaticResource StandardButton}"
                                                 MinWidth="96"
@@ -255,8 +267,29 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <TextBlock Text="快捷键至少要有一个修饰键（Ctrl / Alt / Shift / Win）。注册失败会保留原快捷键，并提示冲突。"
-                                   Margin="0,6,0,2"
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <CheckBox x:Name="WinModifierToggle"
+                                      Grid.Column="0"
+                                      Content="附加 Win"
+                                      ToolTip="系统会先消费 Win 组合，主窗口收不到 Win 键。要录 Ctrl + Win + T 这类组合时，先勾选此项，再按 Ctrl + T。"
+                                      VerticalAlignment="Center"
+                                      FontSize="{DynamicResource App.FontSize.Caption}" />
+
+                            <Button Grid.Column="1"
+                                    Content="仅重置快捷键"
+                                    Style="{StaticResource StandardButton}"
+                                    ToolTip="只把 5 个全局快捷键恢复为默认值，隐藏记录与其它开关保持不变。"
+                                    VerticalAlignment="Center"
+                                    Click="ResetHotkeys_Click" />
+                        </Grid>
+
+                        <TextBlock Text="点「修改」后按下组合键；按 Delete 清空该行，Esc 取消。需要 Win 参与时先勾选「附加 Win」。注册失败会保留原快捷键并提示冲突。"
+                                   Margin="0,8,0,2"
                                    TextWrapping="Wrap"
                                    FontSize="{DynamicResource App.FontSize.Caption}"
                                    Foreground="{DynamicResource App.TextTertiary}" />
@@ -304,7 +337,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
                                     <TextBlock Text="修复右键菜单失效的图标" />
-                                    <TextBlock Text="个别程序不支持托盘重建，恢复后图标可能左右键无反应。若该程序已重启，可在这里重新修复一次。"
+                                    <TextBlock Text="重试旧版等待恢复的图标；已是无响应替代图标的，请重启对应程序。"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -363,7 +396,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="托盘图标管家 v1.2.1"
+                    <TextBlock Text="托盘图标管家 v1.2.2"
                                Margin="2,22,0,0"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextTertiary}" />

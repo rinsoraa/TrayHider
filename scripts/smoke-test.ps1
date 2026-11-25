@@ -14,12 +14,13 @@
 
     判定标准：
         · 进程在观察期内始终存活；
-        · 主窗口句柄非 0（说明主窗口真的创建成功，而不是卡在崩溃/单实例对话框里）。
+        · 出现被测进程的 WPF 主窗口（仅有单实例提示框不算通过）。
     任一条不满足即返回非 0 退出码，并打印最近的 .NET Runtime 未处理异常，便于定位。
 #>
 param(
     [string]$ExePath = "bin\Release\net8.0-windows\TrayHider.exe",
-    [int]$Seconds = 20
+    [int]$Seconds = 20,
+    [string]$InstanceMutex = "Global\TrayHider.SingleInstance.v1"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,14 +34,32 @@ $full = (Resolve-Path $ExePath).Path
 Write-Output "[smoke] exe = $full"
 Write-Output ("[smoke] size = {0} B" -f (Get-Item $full).Length)
 
-# 若已有实例在跑会触发单实例对话框，先提示
-$existing = Get-Process -Name TrayHider -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Output ("[smoke] WARN 已有 TrayHider 在运行（pid=" + ($existing.Id -join ',') + "），可能是产品自身，也可能是残留；请先关闭再测。")
+# 不启动第二实例，否则可能唤起用户窗口，或将单实例提示框误判为启动成功。
+$existing = $null
+if ([Threading.Mutex]::TryOpenExisting($InstanceMutex, [ref]$existing)) {
+    $existing.Dispose()
+    Write-Output "[smoke] SKIP 已有实例在运行；未启动、未结束任何进程。请在干净会话中测试。"
+    exit 3
 }
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class SmokeWindow {
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    static extern int GetClassName(IntPtr hwnd, StringBuilder buf, int length);
+    public static bool IsWpf(IntPtr hwnd) {
+        var buf = new StringBuilder(256);
+        return GetClassName(hwnd, buf, buf.Capacity) > 0 && buf.ToString().StartsWith("HwndWrapper[", StringComparison.Ordinal);
+    }
+}
+'@
 
 $started = Get-Date
-$p = Start-Process -FilePath $full -PassThru
+$start = New-Object Diagnostics.ProcessStartInfo
+$start.FileName = $full
+$start.UseShellExecute = $false  # 被测进程继承当前测试环境，不让 Shell 在别的环境中启动它
+$p = [Diagnostics.Process]::Start($start)
 
 $deadline = (Get-Date).AddSeconds($Seconds)
 $windowSeen = $false
@@ -48,7 +67,7 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
     if ($p.HasExited) { break }
     $proc = Get-Process -Id $p.Id -ErrorAction SilentlyContinue
-    if ($proc -and $proc.MainWindowHandle -ne 0) { $windowSeen = $true }
+    if ($proc -and $proc.MainWindowTitle -eq '托盘图标管家' -and [SmokeWindow]::IsWpf($proc.MainWindowHandle)) { $windowSeen = $true }
 }
 
 if ($p.HasExited) {

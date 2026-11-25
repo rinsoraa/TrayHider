@@ -15,9 +15,10 @@ namespace TrayHider.ViewModels;
 /// 主视图模型。
 ///
 /// 隐藏机制（与 gohide、以及本软件"隐藏自身托盘图标"选项同一底层 API）：
-///   通过 Shell_NotifyIcon 的 NIM_DELETE 让 Shell 立即删除目标图标（跨进程），
-///   图标从任务栏托盘与溢出面板同时消失，进程照常运行。绝不删除注册表子键，
-///   也绝不触碰目标进程本身。
+///   v1.2.2 起通过 Shell_NotifyIcon 的 NIF_STATE/NIS_HIDDEN 做**非破坏性隐藏**：
+///   图标从任务栏托盘与溢出面板消失，但 Shell 里的注册与目标程序自己的回调全部保留，
+///   恢复时清除状态位即可 —— 右键菜单/双击不会失效（issue#1/#3 的根治办法）。
+///   绝不 NIM_DELETE 目标程序的注册，也绝不删除注册表子键、不触碰目标进程本身。
 ///
 /// 恢复机制（issue#1 的修复核心）：
 ///   不能由本进程直接 NIM_ADD —— 那样会伪造出目标程序自己的 uCallbackMessage，
@@ -54,14 +55,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     private const int RetryProbeBudgetMs = 1000;
 
-    /// <summary>后台自动重试的探测预算（毫秒）：跑在 Refresh 里，必须短，不能让刷新卡顿。</summary>
-    private const int AutoRetryProbeBudgetMs = 250;
-
-    /// <summary>后台自动重试的节流间隔（毫秒）：每 30 秒最多一轮。</summary>
+    /// <summary>后台兜底检查的节流间隔（毫秒）。</summary>
     private const int AutoRetryIntervalMs = 30_000;
-
-    /// <summary>后台自动重试每轮最多处理的进程数。</summary>
-    private const int AutoRetryMaxProcesses = 3;
 
     /// <summary>
     /// 本软件自身的可执行文件路径（规范化后比较）。exe 可能被改名，因此绝不按进程名判断"自己人"。
@@ -243,7 +238,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public string SelfIconHint => _config.HideSelfTrayIcon
-        ? "本软件图标已隐藏。仍可用全局快捷键唤出主窗口。"
+        ? (_config.GetHotkey(HotkeyActions.ShowMain).IsValid
+            ? "本软件图标已隐藏。仍可用全局快捷键或再次打开本软件唤出主窗口。"
+            : "本软件图标已隐藏，唤出快捷键未设置。再次打开本软件即可找回主窗口。")
         : "本软件图标显示在系统托盘中。";
 
     public bool RunAtStartup
@@ -296,6 +293,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public void NotifyHotkeyChanged()
     {
         OnPropertyChanged(nameof(HotkeyText));
+        OnPropertyChanged(nameof(SelfIconHint));
     }
 
     public void SetStatus(string status)
@@ -304,13 +302,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public event EventHandler<bool>? SelfTrayIconVisibilityChanged;
-
-    /// <summary>
-    /// 隐藏『已知不支持托盘重建』的程序前的确认回调；返回 false 表示不隐藏该项。
-    /// 由界面接线（弹一个"确定要隐藏吗？该程序恢复后图标可能点不动"的对话框）。
-    /// 为 null 时保守跳过这些图标，并在状态栏说明原因。
-    /// </summary>
-    public Func<TrayIconItem, bool>? ConfirmHideUnsupported { get; set; }
 
     // ---------------------------------------------------------------- 生命周期
 
@@ -366,7 +357,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>
     /// 扫描托盘图标并与现有列表做增量对齐。
     /// 列表只包含"当前正在运行"的图标；已隐藏项靠 _hiddenBackups 标记。
-    /// 刷新时对已隐藏项重新执行 NIM_DELETE，应对程序周期性重新注册图标。
+    /// 刷新时对已隐藏项重新置位状态隐藏（幂等），应对程序周期性重新注册图标。
     /// </summary>
     public void Refresh() => RunOnUiThread(RefreshCore);
 
@@ -415,6 +406,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 }
 
                 var isHidden = _hiddenBackups.ContainsKey(entry.SubKeyName);
+
                 if (UpsertEntry(entry, procInfo, isHidden))
                 {
                     _presentScratch.Add(entry.SubKeyName);
@@ -445,7 +437,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 }
             }
 
-            // 4) 监控：对已隐藏且运行中的图标重新 NIM_DELETE，保持隐藏
+            // 4) 监控：对已隐藏且运行中的图标重新置位状态隐藏，保持隐藏
             ReapplyHidden();
 
             if (_sortDirty) SortIcons();
@@ -483,36 +475,93 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// 对"已隐藏且运行中"的图标重新执行 NIM_DELETE。两个用途：
-    ///   1. 刷新时对抗程序周期性重新注册图标；
-    ///   2. 恢复后的副作用回收 —— 目标程序收到 TaskbarCreated 会把它的**全部**图标
-    ///      都加回来，其中仍应保持隐藏的必须再删一次，否则"恢复一个 = 把所有隐藏的都放出来"。
+    /// 对"已隐藏且运行中"的图标重新隐藏（刷新与守护共用）。规则：
+    ///   1. **只做非破坏性状态隐藏，绝不再 NIM_DELETE 目标程序的注册**；
+    ///   2. 旧版"删除式隐藏"的备份如果发现程序已经重新注册了图标（升级后首次刷新、或 owner 重启过），
+    ///      就把这条备份**升级成 State 模式**并重新置位 —— 而不是再删一次，
+    ///      否则每次刷新都会把 owner 刚注册的图标删掉，图标永远回不来；
+    ///   3. 缓存的窗口句柄必须仍属于目标进程（见 <see cref="IsItemWindowValid"/>），否则按进程名重新定位。
     /// </summary>
     private void ReapplyHidden()
     {
         foreach (var item in Icons)
         {
             if (!item.IsHidden || !item.IsRunning) continue;
-            if (!TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity)) continue;
-
-            // 句柄失效（程序换了窗口重新注册，例如刚收到 TaskbarCreated）→ 先重新定位
-            if (!TrayIconController.IsWindowAlive(item.Hwnd) &&
-                identity.IsValid &&
-                !string.IsNullOrEmpty(item.ProcessName))
-            {
-                var hwnd = TrayIconController.FindTrayWindow(item.ProcessName, identity);
-                if (hwnd != IntPtr.Zero) item.Hwnd = hwnd;
-            }
-
-            if (item.Hwnd != IntPtr.Zero)
-            {
-                TrayIconController.HideIcon(item.Hwnd, identity);
-            }
+            if (item.RestoreBlocked) continue;   // 用户请求过显示、正在等程序重启：不再盖回去
+            ReapplyHiddenItem(item);
         }
     }
 
     /// <summary>
-    /// 低频守护已隐藏图标：只复用隐藏时缓存的窗口句柄重新 NIM_DELETE。
+    /// 重新隐藏单个条目。返回是否已经处于（或成功进入）隐藏状态。
+    /// 任何情况下都不会删除目标程序的注册 —— 状态隐藏不可用时宁可让它显示。
+    /// </summary>
+    private bool ReapplyHiddenItem(TrayIconItem item)
+    {
+        if (!TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity)) return false;
+
+        if (!IsItemWindowValid(item))
+        {
+            var relocated = ResolveIconWindow(item, identity);
+            if (relocated == IntPtr.Zero) return false;
+            item.Hwnd = relocated;
+        }
+
+        if (TrayIconController.TryHideByState(item.Hwnd, identity))
+        {
+            UpgradeHiddenBackupToState(item);
+            return true;
+        }
+
+        if (item.HideMode == TrayHideMode.Delete)
+        {
+            // 旧备份 + 注册已经不在（删除式隐藏的常态）→ 无需动作
+            if (!TrayIconController.IsIconRegistered(item.Hwnd, identity)) return true;
+        }
+
+        // 置位失败且可能换了窗口：重新定位后再试一次（仍不删除）
+        var retried = ResolveIconWindow(item, identity);
+        if (retried == IntPtr.Zero || retried == item.Hwnd) return false;
+
+        item.Hwnd = retried;
+        if (!TrayIconController.TryHideByState(retried, identity)) return false;
+
+        UpgradeHiddenBackupToState(item);
+        return true;
+    }
+
+    /// <summary>
+    /// "用户请求显示、等程序重启"的隐藏记录能否解除。
+    /// 判据必须是**目标图标真的重新注册了**：
+    ///   * IsIconRegistered 用 uFlags=0 精确探测 (hwnd, uID/GUID)，只认这一条图标；
+    ///   * State 方式还要求 TryShowByState 成功（顺手把可能残留的隐藏状态清掉）。
+    /// 仅凭注册表里存在历史行是不算的 —— NIM_DELETE 之后那一行会一直留着。
+    /// </summary>
+    private static bool CanReleaseRestorePending(IntPtr hwnd, TrayIconIdentity identity, TrayHideMode mode)
+    {
+        if (!TrayIconController.IsIconRegistered(hwnd, identity)) return false;
+        return mode != TrayHideMode.State || TrayIconController.TryShowByState(hwnd, identity);
+    }
+
+    /// <summary>
+    /// 旧版删除式备份被"升级"为状态隐藏时同步记录：条目与持久化备份都改成 State，
+    /// 这样重启本软件后也不会再用删除方式去处理它。
+    /// </summary>
+    private void UpgradeHiddenBackupToState(TrayIconItem item)
+    {
+        if (item.HideMode == TrayHideMode.State) return;
+
+        item.HideMode = TrayHideMode.State;
+
+        if (_hiddenBackups.TryGetValue(item.SubKeyName, out var backup) && backup.HideMode != TrayHideMode.State)
+        {
+            backup.HideMode = TrayHideMode.State;
+            Persist();
+        }
+    }
+
+    /// <summary>
+    /// 低频守护已隐藏图标：复用隐藏时缓存的窗口句柄重新隐藏（按隐藏方式分别处理）。
     /// 顺带用（带 TTL 的）进程索引确认进程是否还活着 —— 进程都退出了，
     /// 就没必要再对着失效句柄反复发消息。
     /// </summary>
@@ -534,6 +583,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         foreach (var item in Icons)
         {
             if (!item.IsHidden) continue;
+            if (item.RestoreBlocked) continue;   // 同上：不再和程序自己重新注册抢
 
             if (!_processIndex.TryFind(item.ExecutablePath, out _))
             {
@@ -545,11 +595,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 continue;
             }
 
-            if (!TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity)) continue;
-            if (item.Hwnd != IntPtr.Zero)
-            {
-                TrayIconController.HideIcon(item.Hwnd, identity);
-            }
+            ReapplyHiddenItem(item);   // 只做非破坏性状态隐藏，绝不删除对方的注册
         }
     }
 
@@ -588,10 +634,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 : IntPtr.Zero;
         }
 
+        // 用户点过"显示"、只是因为程序不响应托盘重建才在等它重启。
+        // 注意：HKCU\Control Panel\NotifyIconSettings 里的行是**永存历史**（NIM_DELETE 之后照样在），
+        // "有注册表行"根本不能证明 owner 已经重新注册 —— 必须真的找到该图标的注册窗口、
+        // 核对注册确实存在（State 方式还要求状态能清除成功）才解除这条记录。
+        if (isHidden &&
+            _hiddenBackups.TryGetValue(entry.SubKeyName, out var pendingBackup) &&
+            pendingBackup.RestorePending &&
+            hwnd != IntPtr.Zero &&
+            CanReleaseRestorePending(hwnd, identity, pendingBackup.HideMode))
+        {
+            _hiddenBackups.Remove(entry.SubKeyName);
+            isHidden = false;
+            Persist();   // 解除"等重启"的记录要落盘，否则下次启动又会盖回去
+        }
+
         // 过滤：图标不在托盘（探测不到窗口）且未隐藏 → 多余条目，不显示
         if (hwnd == IntPtr.Zero && !isHidden)
         {
             return false;
+        }
+
+        // 备份里记录的隐藏方式 + "等程序重启"标记（新建条目也要带上，否则重启本软件后守护会盖回去）
+        var backupMode = TrayHideMode.Delete;
+        var pendingRestore = false;
+        if (isHidden && _hiddenBackups.TryGetValue(entry.SubKeyName, out var entryBackup))
+        {
+            backupMode = entryBackup.HideMode;
+            pendingRestore = entryBackup.RestorePending;
         }
 
         if (existing != null)
@@ -610,6 +680,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             existing.DisplayName = entry.DisplayName;
             existing.Uid = entry.Uid;
             existing.IconGuid = entry.IconGuid;
+            if (isHidden && _hiddenBackups.TryGetValue(entry.SubKeyName, out var hiddenBackup))
+            {
+                existing.HideMode = hiddenBackup.HideMode;
+            }
+
+            // 备份里记着"等程序重启"→ 条目也要同步，否则重启本软件后守护会把它盖回去
+            existing.RestoreBlocked = isHidden &&
+                _hiddenBackups.TryGetValue(entry.SubKeyName, out var pendingState) &&
+                pendingState.RestorePending;
             existing.OnSubTitleRefresh();
             return true;
         }
@@ -626,6 +705,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             IsRunning = true,
             ProcessId = procInfo.Id,
             Hwnd = hwnd,
+            HideMode = backupMode,
+            RestoreBlocked = pendingRestore,
             IsHidden = isHidden,
             IsSelected = false
         };
@@ -669,6 +750,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             existing.Uid = backup.Uid;
             existing.IconGuid = backup.IconGuid;
             existing.WindowClassName = backup.WindowClassName;
+            existing.HideMode = backup.HideMode;
+            existing.RestoreBlocked = backup.RestorePending;   // 重启本软件后仍记得"别再盖回去"
             existing.OnSubTitleRefresh();
             return;
         }
@@ -690,6 +773,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ProcessId = procInfo.Id,
             Hwnd = hwnd,
             WindowClassName = backup.WindowClassName,
+            HideMode = backup.HideMode,
+            RestoreBlocked = backup.RestorePending,
             IsHidden = true,
             IsSelected = false
         };
@@ -757,15 +842,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         var success = 0;
         var skipped = 0;
+        var failed = 0;
         List<TrayIconItem>? skippedItems = null;
-        var confirmCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in targets)
         {
-            switch (HideItem(item, confirmCache))
+            switch (HideItem(item))
             {
                 case HideResult.Hidden:
                     success++;
+                    break;
+                case HideResult.Failed:
+                    failed++;
                     break;
                 case HideResult.Skipped:
                     skipped++;
@@ -783,7 +871,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Persist();
         UpdateCounters();
         ApplyPendingSort();
-        StatusText = $"已隐藏 {success} 个图标，对应程序仍在后台正常运行{BuildSkipSuffix(skipped)}";
+        StatusText = $"已隐藏 {success} 个图标，对应程序仍在后台正常运行{BuildSkipSuffix(skipped)}{BuildFailSuffix(failed)}";
     }
 
     /// <summary>隐藏当前列表中的全部图标。</summary>
@@ -795,18 +883,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         var success = 0;
         var skipped = 0;
+        var failed = 0;
         var total = 0;
-        var confirmCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in Icons)
         {
             if (item.IsHidden) continue;
             total++;
 
-            switch (HideItem(item, confirmCache))
+            switch (HideItem(item))
             {
                 case HideResult.Hidden:
                     success++;
+                    break;
+                case HideResult.Failed:
+                    failed++;
                     break;
                 case HideResult.Skipped:
                     skipped++;
@@ -821,7 +912,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ? "所有图标都已处于隐藏状态"
             : success == 0 && skipped > 0
                 ? $"已跳过 {skipped} 个图标：该程序不支持托盘重建"
-                : $"已隐藏全部 {success} 个图标{BuildSkipSuffix(skipped)}";
+                : $"已隐藏全部 {success} 个图标{BuildSkipSuffix(skipped)}{BuildFailSuffix(failed)}";
     }
 
     /// <summary>隐藏单个图标的结果。</summary>
@@ -830,20 +921,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         /// <summary>已隐藏（含"本来就已经处于隐藏状态"）。</summary>
         Hidden,
 
-        /// <summary>失败：定位不到图标，或 NIM_DELETE 被 Shell 拒绝。</summary>
+        /// <summary>失败：定位不到图标，或 Shell 既拒绝了状态隐藏也拒绝了删除。</summary>
         Failed,
 
         /// <summary>被跳过：本软件自身，或该程序已知不支持托盘重建且用户选择不隐藏。</summary>
         Skipped
     }
 
-    /// <summary>彻底隐藏单个图标：NIM_DELETE（图标立即从托盘与溢出面板消失）。</summary>
+    /// <summary>隐藏单个图标：非破坏性状态隐藏（NIF_STATE/NIS_HIDDEN，图标立即从托盘与溢出面板消失）。</summary>
     /// <param name="item">目标条目。</param>
-    /// <param name="confirmCache">
-    /// 同一批隐藏里"进程名 → 用户是否同意隐藏"的缓存：同一进程只弹一次确认框。
-    /// 单条操作（双击）可以传 null，等价于每项都问一次。
-    /// </param>
-    private HideResult HideItem(TrayIconItem item, Dictionary<string, bool>? confirmCache = null)
+    private HideResult HideItem(TrayIconItem item)
     {
         if (item.IsHidden) return HideResult.Hidden;
 
@@ -854,9 +941,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return HideResult.Skipped;
         }
 
-        // 已知"不支持托盘重建"的程序：隐藏后恢复只能伪造注册、图标会点不动 —— 先问一次
-        if (!ConfirmHideAllowed(item, confirmCache)) return HideResult.Skipped;
-
         if (item.Hwnd == IntPtr.Zero ||
             !TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity))
         {
@@ -864,7 +948,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return HideResult.Failed;
         }
 
-        // 记录恢复信息（含窗口类名，供重启后按类名重新定位窗口）。
+        // v1.2.2：隐藏**只走非破坏性状态隐藏**（NIF_STATE/NIS_HIDDEN）。
+        // 绝不 NIM_DELETE 目标程序的原生注册 —— 删了就只剩"伪造重建"，图标会变成点不动的死图标
+        // （issue#1/#3 的根源）。Shell 不支持时宁可明确告诉用户"没隐藏成功"，也不动人家的注册。
+        if (!TryHideWithoutDeleting(item.Hwnd, identity))
+        {
+            StatusText = $"未隐藏 {item.DisplayName}：该图标不支持非破坏性隐藏（不会删除程序自己的注册）";
+            return HideResult.Failed;
+        }
+
+        var hideMode = TrayHideMode.State;
+
+        // 记录恢复信息（含窗口类名，供删除模式下按类名重新定位窗口）。
         // 备份里的图标字节统一规范化成 ≤32×32 PNG：config.json 的 base64 随之变小。
         var windowClassName = TrayIconController.GetWindowClassName(item.Hwnd);
         var registrySnapshot = TrayIconReader.ReadIconSnapshot(item.SubKeyName);
@@ -884,17 +979,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             IconSnapshot = registrySnapshot == null ? item.IconSnapshot : null,
             Publisher = item.Publisher,
             ToolTip = item.DisplayName,
-            WindowClassName = windowClassName
+            WindowClassName = windowClassName,
+            HideMode = hideMode
         };
 
-        if (!TrayIconController.HideIcon(item.Hwnd, identity))
-        {
-            _hiddenBackups.Remove(item.SubKeyName);
-            StatusText = $"隐藏 {item.DisplayName} 失败";
-            return HideResult.Failed;
-        }
-
         item.WindowClassName = windowClassName;
+        item.HideMode = hideMode;
         item.CallbackDegraded = false;   // 隐藏后不存在"右键菜单失效"的问题
         item.IsHidden = true;
         _sortDirty = true;
@@ -933,14 +1023,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             var success = 0;
             var skipped = 0;
-            var confirmCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            var failed = 0;
 
             foreach (var item in targets)
             {
-                switch (HideItem(item, confirmCache))
+                switch (HideItem(item))
                 {
                     case HideResult.Hidden:
                         success++;
+                        break;
+                    case HideResult.Failed:
+                        failed++;
                         break;
                     case HideResult.Skipped:
                         skipped++;
@@ -952,10 +1045,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             UpdateCounters();
             ApplyPendingSort();
             StatusText = success > 0
-                ? $"已隐藏 {name} 的 {success} 个托盘图标{BuildSkipSuffix(skipped)}"
+                ? $"已隐藏 {name} 的 {success} 个托盘图标{BuildSkipSuffix(skipped)}{BuildFailSuffix(failed)}"
                 : skipped > 0
                     ? $"已跳过 {name}：该程序不支持托盘重建"
-                    : $"隐藏 {name} 的托盘图标失败";
+                    : failed > 0
+                        ? $"未隐藏 {name}：该图标不支持非破坏性隐藏（不会删除程序自己的注册）"
+                        : $"隐藏 {name} 的托盘图标失败";
             return success;
         }
         catch (Exception ex)
@@ -1099,6 +1194,35 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// 取消某个图标的隐藏意图：删掉隐藏记录、不再守护它。
+    ///
+    /// 主要给"恢复失败（程序不响应托盘重建）"的条目用 —— 此时图标已经不在，
+    /// 我们也不会伪造，删掉记录后该程序**下次启动时会自己注册**，图标就正常回来了，
+    /// 而且守护逻辑不会再去抢它。返回是否真的取消了一条记录。
+    /// </summary>
+    public bool CancelHide(TrayIconItem item) => RunOnUiThread(() => CancelHideCore(item));
+
+    private bool CancelHideCore(TrayIconItem item)
+    {
+        var removed = _hiddenBackups.Remove(item.SubKeyName);
+
+        item.RestoreBlocked = false;
+        item.CallbackDegraded = false;
+        item.IconSnapshot = null;
+        item.IsHidden = false;
+        item.HideMode = TrayHideMode.Delete;
+        _sortDirty = true;
+
+        Persist();
+        UpdateCounters();
+        ApplyPendingSort();
+        StatusText = removed
+            ? $"已取消隐藏 {item.DisplayName}：该程序下次启动时图标会自动恢复"
+            : $"已取消 {item.DisplayName} 的隐藏标记";
+        return removed;
+    }
+
     /// <summary>切换单个图标的隐藏状态（双击）。</summary>
     public void ToggleItem(TrayIconItem item) => RunOnUiThread(() => ToggleItemCore(item));
 
@@ -1142,21 +1266,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// 批量恢复被隐藏的图标 —— 本文件的核心逻辑。步骤与原因：
+    /// 批量恢复被隐藏的图标 —— 本文件的核心逻辑。按隐藏方式分两条路：
     ///
-    ///   1. 先探测：图标是不是已经在托盘里了（程序可能自己又注册过）。在就视为已完成，
-    ///      重复注册反而可能破坏目标程序原有的回调。
-    ///   2. 仍缺失的，按"进程"去重后向该程序**全部实例进程**的窗口 PostMessage(TaskbarCreated)。
-    ///      这是唯一能让目标程序用**它自己的** hWnd/uID/uCallbackMessage 重新 NIM_ADD 的办法，
-    ///      恢复后的图标右键菜单/双击才是正常的（issue#1 的根因见 TrayIconController 注释）。
-    ///   3. 短轮询（15ms 一步、总预算 600ms）用 NIM_MODIFY（uFlags=0，无副作用）探测图标是否回归，
-    ///      回归 = 恢复成功。实测回归耗时 min 6ms / 中位 11ms / 最大 109ms，详见
-    ///      build/TrayProbe/results/report.txt 的双进程探针报告。
-    ///   4. 预算用尽仍未回归 = 该程序不处理 TaskbarCreated → 降级用本进程 NIM_ADD 重建，
-    ///      并置 CallbackDegraded 提醒用户"右键菜单可能失效，重启该程序即可恢复"。
-    ///   5. 收尾做副作用回收：目标程序收到 TaskbarCreated 会把它的**全部**图标都加回来，
-    ///      其中本该保持隐藏的必须再 NIM_DELETE 一次（ReapplyHidden），
-    ///      否则"恢复一个图标 = 把所有隐藏的都放出来"。
+    ///   A. **非破坏性隐藏（TrayHideMode.State，v1.2.2 起的默认方式）**：
+    ///      只需清除 NIS_HIDDEN 状态位，Shell 里的注册与目标程序自己的回调从头到尾没被动过，
+    ///      因此恢复后右键菜单/双击必然正常 —— 这是 issue#3（火绒这类程序恢复后点不动）的根治办法。
+    ///      若清除状态失败（注册已不在，例如程序重启过），退回 B 路径。
+    ///
+    ///   B. **破坏性隐藏（TrayHideMode.Delete，旧版本留下的记录）**：
+    ///      1) 先探测图标是否已在托盘里（程序可能自己重新注册过），在就算完成；
+    ///      2) 仍缺失的，按进程去重后向该程序全部实例进程 PostMessage(TaskbarCreated)，
+    ///         让它用**自己的** hWnd/uID/uCallbackMessage 重新注册（实测中位 11ms 回归）；
+    ///      3) 15ms/步、总预算 RestoreProbeBudgetMs 轮询探测回归；
+    ///      4) 仍未回归 = 该程序不响应 TaskbarCreated → **不再伪造图标**（伪造出来的图标
+    ///         看得见点不动，正是 issue#1/#3 的根源），保持隐藏并在状态栏说明"请重启该程序"。
+    ///
+    ///   收尾（两条路都要做）：收到 TaskbarCreated 的程序会把它的**全部**图标都加回来，
+    ///   其中仍应保持隐藏的必须重新隐藏一次（ReapplyHidden），否则"恢复一个 = 放出全部"。
     ///
     /// 整个过程同步执行、总阻塞不超过 RestoreProbeBudgetMs，等待期间会抽取消息泵，
     /// 因此界面不会假死（重入由 _isRestoring 拦住）。
@@ -1165,6 +1291,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         var plans = new List<RestorePlan>();
         var failed = 0;
+        var cleaned = 0;
 
         foreach (var item in source)
         {
@@ -1175,25 +1302,73 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
 
             var hwnd = ResolveIconWindow(item, identity);
+
+            // 进程已退出 / 窗口都找不到：注册早就随进程消失了，谈不上"恢复"。
+            // 直接清掉隐藏记录（程序下次启动会自己注册，图标自然就回来了），不报失败。
+            if (hwnd == IntPtr.Zero && !item.IsRunning)
+            {
+                CompleteRestore(item, IntPtr.Zero);
+                cleaned++;
+                continue;
+            }
+
             plans.Add(new RestorePlan(item, identity, hwnd));
         }
 
         if (plans.Count == 0)
         {
-            return new RestoreOutcome(0, failed, 0, Array.Empty<string>());
+            return new RestoreOutcome(0, failed, cleaned, Array.Empty<string>());
         }
 
-        // 1) 已经在托盘里的直接算完成（不要重复注册）
+        // 0) 非破坏性隐藏（State）：**必须真正清除状态位**才算恢复。
+        //    这里绝不能拿"Shell 里还存在注册"当成功 —— 那正是被隐藏的状态位，
+        //    会导致误报已恢复、并把隐藏记录删掉（图标其实还藏着）。
+        var rebuildables = new List<RestorePlan>();
+
         foreach (var plan in plans)
         {
-            plan.Registered = TrayIconController.IsIconRegistered(plan.Hwnd, plan.Identity);
+            plan.IsStateMode = plan.Item.HideMode == TrayHideMode.State;
+
+            if (!plan.IsStateMode)
+            {
+                rebuildables.Add(plan);   // 旧版删除式记录：走"让程序自己重新注册"
+                continue;
+            }
+
+            if (TrayIconController.TryShowByState(plan.Hwnd, plan.Identity))
+            {
+                plan.Registered = true;   // 清除成功 = 真的恢复了，回调原封不动
+                continue;
+            }
+
+            if (TrayIconController.IsIconRegistered(plan.Hwnd, plan.Identity))
+            {
+                // 注册还在但状态清不掉：语义不明，按失败处理（保留隐藏记录），绝不谎报恢复
+                plan.Ambiguous = true;
+                continue;
+            }
+
+            // 注册确实没了（程序重启过等）→ 允许让程序自己重新注册
+            rebuildables.Add(plan);
+        }
+
+        // 1) 需要重建的条目先探测：已经在托盘里的直接算完成（不要重复注册）
+        foreach (var plan in rebuildables)
+        {
+            if (plan.Registered) continue;
+
+            if (TrayIconController.IsIconRegistered(plan.Hwnd, plan.Identity))
+            {
+                plan.Registered = true;
+                plan.OwnerRebuilt = true;
+            }
         }
 
         // 2) 仍缺失的按进程去重投递 TaskbarCreated（同一进程只投一次）
         var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var posted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var plan in plans)
+        foreach (var plan in rebuildables)
         {
             if (plan.Registered) continue;
 
@@ -1218,13 +1393,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 var stillWaiting = false;
 
-                foreach (var plan in plans)
+                foreach (var plan in rebuildables)
                 {
                     if (plan.Registered || !plan.Waiting) continue;
 
                     if (TrayIconController.IsIconRegistered(plan.Hwnd, plan.Identity))
                     {
                         plan.Registered = true;
+                        plan.OwnerRebuilt = true;   // 由程序自己重新注册回来的，才算证明它支持重建
                         continue;
                     }
 
@@ -1238,7 +1414,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         // 3.5) 预算用尽：最后完整搜一次（个别程序会换一个新窗口来注册）
-        foreach (var plan in plans)
+        foreach (var plan in rebuildables)
         {
             if (plan.Registered || !plan.Waiting) continue;
 
@@ -1247,12 +1423,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             plan.Hwnd = hwnd;
             plan.Registered = true;
+            plan.OwnerRebuilt = true;
         }
 
-        // 4) 收尾：成功项清理备份；失败项降级重建（只保证可见性）
+        // 4) 收尾：成功项清理隐藏记录；失败项**保持隐藏**并记入学习集合
         var restored = 0;
-        var degraded = 0;
-        var degradedNames = new List<string>(2);
+        var unsupportedNames = new List<string>(2);
 
         foreach (var plan in plans)
         {
@@ -1260,42 +1436,65 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 CompleteRestore(plan.Item, plan.Hwnd);
 
-                // 这个程序能用自己的回调注册回来：如果以前被记成"不支持托盘重建"，撤销那条记录
-                ClearRebuildUnsupported(ProcessNameOf(plan.Item));
+                // 只有"程序自己重新注册回来"才算证明它支持重建；状态位清除不能当证据
+                if (plan.OwnerRebuilt) ClearRebuildUnsupported(ProcessNameOf(plan.Item));
 
                 restored++;
                 continue;
             }
 
-            if (!AddIconFallback(plan))
+            // 恢复不了：绝不伪造图标。保留备份但记下"用户请求过显示"（持久化），
+            // 守护逻辑从此不再盖回它 —— 重启本软件后同样有效，
+            // 程序自己重新注册图标时再自动解除这条记录（不会和 owner 抢）。
+            failed++;
+            plan.Item.CallbackDegraded = false;
+            plan.Item.RestoreBlocked = true;
+
+            if (_hiddenBackups.TryGetValue(plan.Item.SubKeyName, out var pending))
             {
-                failed++;
-                continue;
+                pending.RestorePending = true;
             }
 
-            CompleteRestore(plan.Item, plan.Hwnd);
-            plan.Item.CallbackDegraded = true;
+            // 只有"删除式"条目才谈得上"不支持托盘重建"（状态位清除失败不算这个结论）
+            if (!plan.IsStateMode) MarkRebuildUnsupported(ProcessNameOf(plan.Item));
 
-            // 学习：这个程序不响应 TaskbarCreated，下次隐藏它之前必须先提醒用户
-            MarkRebuildUnsupported(ProcessNameOf(plan.Item));
-
-            restored++;
-            degraded++;
-
-            var name = plan.Item.ProcessName;
-            if (!string.IsNullOrEmpty(name) && !degradedNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+            var name = ProcessNameOf(plan.Item);
+            if (name.Length > 0 && !unsupportedNames.Contains(name, StringComparer.OrdinalIgnoreCase))
             {
-                degradedNames.Add(name);
+                unsupportedNames.Add(name);
             }
         }
 
-        // 5) 副作用回收：目标程序把它的全部图标都加回来了，仍应隐藏的要再删一次
+        // 5) 副作用回收：目标程序把它的全部图标都加回来了，仍应隐藏的要再隐藏一次
         if (posted.Count > 0)
         {
             ReapplyHidden();
         }
 
-        return new RestoreOutcome(restored, failed, degraded, degradedNames.ToArray());
+        return new RestoreOutcome(restored, failed, cleaned, unsupportedNames.ToArray());
+    }
+
+    /// <summary>
+    /// 缓存的窗口句柄是否还能安全操作：窗口存在**且**仍属于该条目记录的那个进程。
+    ///
+    /// 只判断 IsWindow 不够 —— 进程退出后窗口句柄会被系统回收再利用，
+    /// 拿旧句柄 + 相同 uID 去 NIM_MODIFY 可能操作到**别的程序**的图标。
+    /// 因此还要核对进程号，并用进程名兜住"进程号被复用"的情况（读不到进程名就当作不可信，
+    /// 交给按进程名重新定位）。
+    /// </summary>
+    private static bool IsItemWindowValid(TrayIconItem item)
+    {
+        if (!TrayIconController.IsWindowAlive(item.Hwnd)) return false;
+
+        var pid = TrayIconController.GetWindowProcessId(item.Hwnd);
+        if (pid == 0) return false;
+        if (item.ProcessId != 0 && pid != item.ProcessId) return false;
+
+        var name = TrayIconController.GetProcessName(pid);
+        if (name.Length == 0) return false;
+
+        return item.ProcessName.Length == 0 ||
+               string.Equals(name, item.ProcessName, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1306,7 +1505,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     private static IntPtr ResolveIconWindow(TrayIconItem item, TrayIconIdentity identity)
     {
-        if (TrayIconController.IsWindowAlive(item.Hwnd)) return item.Hwnd;
+        if (IsItemWindowValid(item)) return item.Hwnd;
 
         var processName = item.ProcessName;
         if (string.IsNullOrEmpty(processName)) return IntPtr.Zero;
@@ -1328,33 +1527,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return hwnd;
     }
 
-    /// <summary>
-    /// 降级路径：用本进程伪造的 NIM_ADD 把图标加回来，只保证"图标可见"。
-    /// 目标程序不处理我们伪造的回调消息，所以这条路径下右键菜单可能失效。
-    /// </summary>
-    private bool AddIconFallback(RestorePlan plan)
-    {
-        var hwnd = plan.Hwnd;
-        if (!TrayIconController.IsWindowAlive(hwnd))
-        {
-            hwnd = ResolveIconWindow(plan.Item, plan.Identity);
-        }
-
-        if (hwnd == IntPtr.Zero) return false;
-
-        var snapshot = TrayIconReader.ReadIconSnapshot(plan.Item.SubKeyName)
-            ?? plan.Item.IconSnapshot
-            ?? (_hiddenBackups.TryGetValue(plan.Item.SubKeyName, out var backup) ? backup.IconSnapshot : null);
-
-        if (!TrayIconController.RecreateIconFallback(hwnd, plan.Identity, snapshot, plan.Item.DisplayName))
-        {
-            return false;
-        }
-
-        plan.Hwnd = hwnd;
-        return true;
-    }
-
     /// <summary>恢复成功后同步内存状态：清掉隐藏备份，标记图标重新显示。</summary>
     private void CompleteRestore(TrayIconItem item, IntPtr hwnd)
     {
@@ -1362,30 +1534,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         item.IsHidden = false;
         item.CallbackDegraded = false;
+        item.RestoreBlocked = false;
         item.IconSnapshot = null;
         _hiddenBackups.Remove(item.SubKeyName);
         _sortDirty = true;
     }
 
-    /// <summary>拼装恢复结果提示。降级项必须写清楚，否则用户会以为功能坏了。</summary>
+    /// <summary>拼装恢复结果提示。失败项必须写清楚"为什么没恢复"，否则用户会以为功能坏了。</summary>
     private static string BuildRestoreStatusText(RestoreOutcome outcome)
     {
-        if (outcome.Restored == 0)
+        if (outcome.Restored == 0 && outcome.Failed == 0)
         {
-            // 失败原因有两种：定位不到目标窗口，或窗口找到了但 NIM_ADD 被系统拒绝（提权/受保护进程）。
-            // 两者对用户的处理建议相同（重启该程序），因此合并成一句可操作的提示。
-            return outcome.Failed > 0
-                ? "恢复失败：无法定位或重建该程序的托盘图标，重启该程序后即可恢复"
+            return outcome.Cleaned > 0
+                ? $"已清理 {outcome.Cleaned} 条已退出程序的隐藏记录"
                 : "当前没有被隐藏的图标";
         }
 
-        var text = $"已恢复 {outcome.Restored} 个图标到任务栏托盘";
-        if (outcome.Failed > 0) text += $"（{outcome.Failed} 个失败）";
-
-        if (outcome.Degraded > 0)
+        if (outcome.Restored == 0)
         {
-            var names = string.Join("、", outcome.DegradedNames);
-            text += $"。{names} 未响应托盘重建，右键菜单可能失效，重启该程序即可恢复";
+            var names = outcome.UnsupportedNames.Length > 0
+                ? string.Join("、", outcome.UnsupportedNames) + " "
+                : string.Empty;
+            return $"恢复失败：{names}不响应托盘重建，也不会伪造图标 —— 请重启该程序后再试";
+        }
+
+        var text = $"已恢复 {outcome.Restored} 个图标到任务栏托盘";
+
+        if (outcome.Cleaned > 0) text += $"（另清理 {outcome.Cleaned} 条已退出程序的记录）";
+
+        if (outcome.Failed > 0)
+        {
+            var names = outcome.UnsupportedNames.Length > 0
+                ? string.Join("、", outcome.UnsupportedNames)
+                : $"{outcome.Failed} 个程序";
+            text += $"；{names} 不响应托盘重建，已保持隐藏（不会伪造图标），请重启该程序后再试";
         }
 
         return text;
@@ -1459,17 +1641,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return !dispatcher.HasShutdownStarted;
     }
 
-    // ---------------------------------------------------------------- 降级修复
+    // ---------------------------------------------------------------- 重试（历史遗留）
 
     /// <summary>
-    /// 重试"已验证降级"的图标（设置页按钮）：重新投递 TaskbarCreated，让程序用**它自己的**
-    /// 回调重新注册。成功即清除"右键菜单可能失效"的标记，并把该程序移出"不支持托盘重建"名单。
-    ///
-    /// 为什么必须先删掉当前注册：降级后的图标是本软件伪造的，NIM_MODIFY 探测对它同样返回
-    /// TRUE —— "图标存在"无法区分真伪。所以只能先 NIM_DELETE、再让程序自己注册回来；
-    /// 若它仍不响应，则用伪造注册把图标加回去，保证可见性不倒退（但**不算**修复成功）。
+    /// 重试"还没恢复成功"的图标（设置页按钮）。v1.2.2 起行为是**纯恢复、零删除**：
+    ///   * 状态隐藏的条目 → 再次尝试清除 NIS_HIDDEN；
+    ///   * 旧版删除式、且用户点过"显示"的条目（RestoreBlocked / 备份里的 RestorePending）
+    ///     → 再投递一次 TaskbarCreated，让程序自己重新注册；
+    ///   * 全程 **不 NIM_DELETE、不伪造图标**：原程序没响应就保持原样，等它自己重启。
     /// </summary>
-    /// <returns>修复成功的图标数量。</returns>
+    /// <returns>恢复成功的数量。</returns>
     public int RetryDegradedIcons() => RunOnUiThread(RetryDegradedIconsCore);
 
     private int RetryDegradedIconsCore()
@@ -1481,7 +1662,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var targets = new List<TrayIconItem>();
             foreach (var item in Icons)
             {
-                if (item.CallbackDegraded && item.IsRunning) targets.Add(item);
+                if (!item.IsRunning) continue;
+                if (!item.RestoreBlocked && !item.CallbackDegraded) continue;
+                targets.Add(item);
             }
 
             if (targets.Count == 0)
@@ -1490,15 +1673,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 return 0;
             }
 
-            var fixedCount = RetryDegraded(targets, RetryProbeBudgetMs);
+            // 复用正式的恢复流程：状态模式清除状态位、旧记录让程序自己重新注册；不会删除任何注册
+            var outcome = RestoreItems(targets);
 
             Persist();
             UpdateCounters();
             ApplyPendingSort();
-            StatusText = fixedCount > 0
-                ? $"已修复 {fixedCount} 个图标的右键菜单"
-                : "重试失败：这些程序仍未响应托盘重建，重启该程序后即可恢复";
-            return fixedCount;
+
+            StatusText = outcome.Restored > 0
+                ? $"已恢复 {outcome.Restored} 个图标"
+                : "重试未成功：这些程序仍未重新注册，重启该程序后图标会自动恢复";
+
+            return outcome.Restored;
         }
         finally
         {
@@ -1507,159 +1693,30 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// 后台自动重试（跑在 Refresh 里，主窗口可见时才有意义）：
-    /// 每 <see cref="AutoRetryIntervalMs"/> 最多一轮、每轮最多 <see cref="AutoRetryMaxProcesses"/> 个进程，
-    /// 用很短的探测预算，成功就清掉过期的降级提示。
-    ///
-    /// 已知"不支持托盘重建"的程序不在自动重试范围内 —— 重试必须先删注册，那会让它们的图标
-    /// 每隔半分钟闪一下；这类进程靠"程序自己重启（进程号变化）"或用户手动"重试修复"来恢复。
+    /// 后台兜底（跑在 Refresh 里，主窗口可见时才有意义），**只做无破坏的清理**：
+    /// 某个"历史降级"条目的图标在 Shell 里已经没有任何注册（程序重启过、或图标被系统收回）时，
+    /// 把过期的降级标记清掉。绝不在后台删注册、也不伪造图标 —— 那会让用户图标闪一下甚至消失。
+    /// 节流 <see cref="AutoRetryIntervalMs"/>，因此开销可以忽略。
     /// </summary>
     private void AutoRetryDegradedIcons()
     {
         if (!_isMainWindowVisible || _isRestoring) return;
         if (Environment.TickCount64 - _lastAutoRetryTicks < AutoRetryIntervalMs) return;
 
-        var targets = new List<TrayIconItem>();
-        var processes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var changed = false;
 
         foreach (var item in Icons)
         {
-            if (!item.CallbackDegraded || !item.IsRunning) continue;
+            if (!item.CallbackDegraded) continue;
+            if (!TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity)) continue;
+            if (TrayIconController.IsIconRegistered(item.Hwnd, identity)) continue;   // 还有注册：不动它
 
-            var name = ProcessNameOf(item);
-            if (name.Length == 0) continue;
-            if (_rebuildUnsupported.Contains(name)) continue;        // 已知不支持：不打扰（避免图标闪烁）
-
-            if (!processes.Contains(name) && processes.Count >= AutoRetryMaxProcesses) continue;
-            processes.Add(name);
-            targets.Add(item);
+            item.CallbackDegraded = false;
+            changed = true;
         }
-
-        if (targets.Count == 0) return;
 
         _lastAutoRetryTicks = Environment.TickCount64;
-
-        _isRestoring = true;   // 复用恢复期的重入守卫：期间不允许隐藏类操作插进来
-        try
-        {
-            var fixedCount = RetryDegraded(targets, AutoRetryProbeBudgetMs);
-            if (fixedCount > 0)
-            {
-                Persist();
-                ApplyPendingSort();
-                StatusText = $"已自动修复 {fixedCount} 个图标的右键菜单";
-            }
-        }
-        catch
-        {
-            // 后台重试失败不能影响刷新
-        }
-        finally
-        {
-            _isRestoring = false;
-        }
-    }
-
-    /// <summary>
-    /// 重试的公共实现：删掉当前注册 → 按进程去重投递 TaskbarCreated → 短轮询 → 失败项用伪造注册加回。
-    /// </summary>
-    private int RetryDegraded(List<TrayIconItem> targets, int budgetMs)
-    {
-        var plans = new List<RestorePlan>();
-
-        foreach (var item in targets)
-        {
-            if (!TrayIconController.TryCreateIdentity(item.Uid, item.IconGuid, out var identity)) continue;
-
-            var hwnd = ResolveIconWindow(item, identity);
-            if (hwnd == IntPtr.Zero) continue;
-
-            plans.Add(new RestorePlan(item, identity, hwnd));
-        }
-
-        if (plans.Count == 0) return 0;
-
-        // 1) 先删掉当前注册（可能是本软件伪造的那一个），否则"存在"无法区分真伪
-        foreach (var plan in plans)
-        {
-            TrayIconController.HideIcon(plan.Hwnd, plan.Identity);
-        }
-
-        // 2) 按进程去重投递 TaskbarCreated
-        var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var posted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var plan in plans)
-        {
-            var name = ProcessNameOf(plan.Item);
-            if (name.Length == 0) continue;
-
-            if (tried.Add(name) && TrayIconController.RequestTrayRebuild(name, plan.Hwnd) > 0)
-            {
-                posted.Add(name);
-            }
-
-            plan.Waiting = posted.Contains(name);
-        }
-
-        // 3) 短轮询
-        if (posted.Count > 0)
-        {
-            var deadline = Environment.TickCount64 + budgetMs;
-
-            while (true)
-            {
-                var waiting = false;
-
-                foreach (var plan in plans)
-                {
-                    if (plan.Registered || !plan.Waiting) continue;
-
-                    if (TrayIconController.IsIconRegistered(plan.Hwnd, plan.Identity))
-                    {
-                        plan.Registered = true;
-                        continue;
-                    }
-
-                    waiting = true;
-                }
-
-                if (!waiting) break;
-                if (_disposed || Environment.TickCount64 >= deadline) break;
-                if (!PumpWait(RestoreProbeIntervalMs)) break;
-            }
-
-            // 3.5) 最后完整搜一次（程序可能换了新窗口注册）
-            foreach (var plan in plans)
-            {
-                if (plan.Registered || !plan.Waiting) continue;
-
-                var hwnd = TrayIconController.FindTrayWindow(ProcessNameOf(plan.Item), plan.Identity);
-                if (hwnd == IntPtr.Zero) continue;
-
-                plan.Hwnd = hwnd;
-                plan.Registered = true;
-            }
-        }
-
-        // 4) 成功：清降级标记 + 移出"不支持"名单；失败：把图标用伪造注册加回去，保证可见性
-        var fixedCount = 0;
-
-        foreach (var plan in plans)
-        {
-            if (plan.Registered)
-            {
-                plan.Item.CallbackDegraded = false;
-                ClearRebuildUnsupported(ProcessNameOf(plan.Item));
-                fixedCount++;
-                _sortDirty = true;
-                continue;
-            }
-
-            AddIconFallback(plan);
-        }
-
-        return fixedCount;
+        if (changed) ApplyPendingSort();
     }
 
     /// <summary>
@@ -1687,25 +1744,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             StatusText = $"资源管理器已重启，{cleared} 个图标的右键菜单已自动恢复";
         }
-    }
-
-    /// <summary>
-    /// 对"已知不支持托盘重建"的程序做隐藏前确认：命中名单时才问，
-    /// 同一批里同一进程只问一次（答案缓存在 <paramref name="confirmCache"/>）。
-    /// 回调为 null 时保守跳过（不能保证恢复后图标可用，就不动它）。
-    /// </summary>
-    private bool ConfirmHideAllowed(TrayIconItem item, Dictionary<string, bool>? confirmCache)
-    {
-        var name = ProcessNameOf(item);
-        if (name.Length == 0 || !_rebuildUnsupported.Contains(name)) return true;
-
-        if (confirmCache != null && confirmCache.TryGetValue(name, out var cached)) return cached;
-
-        var confirm = ConfirmHideUnsupported;
-        var approved = confirm != null && confirm(item);
-
-        if (confirmCache != null) confirmCache[name] = approved;
-        return approved;
     }
 
     // ---------------------------------------------------------------- 选择辅助
@@ -1941,13 +1979,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _config.RebuildUnsupported = list;
     }
 
+    /// <summary>
+    /// 非破坏性隐藏：NIM_MODIFY + NIF_STATE 置 NIS_HIDDEN，并尽量确认图标确实离开了通知区域。
+    ///
+    /// 实测（build\tray-mode-probe，自建探针图标）：置位后 Shell 仍持有注册（存在性探测 TRUE），
+    /// 文档化只读 API Shell_NotifyIconGetRect 立即不再返回矩形；清除后同一矩形恢复显示。
+    /// 因此这条路径保留了目标程序自己的回调，是 issue#3 的根治办法。
+    ///
+    /// 注意 GetRect 的语义：它失败说明"当前不在通知区域显示"，但**不能**据此断言图标不存在
+    /// （图标可能只是收在溢出面板里、或桌面/任务栏处于非常规状态）。所以：
+    ///   * 置位前能拿到矩形、置位后拿不到  → 验证通过；
+    ///   * 置位前就拿不到（本来就不在显示区）→ 无法验证，相信 Shell 的返回值；
+    ///   * 置位后仍能拿到矩形（最多等 80ms）→ 视为未生效，把状态清回去并返回 false，
+    ///     由调用方明确告知"未隐藏"，**绝不**改用 NIM_DELETE 去删目标程序的注册。
+    /// </summary>
+    private static bool TryHideWithoutDeleting(IntPtr hwnd, TrayIconIdentity identity)
+    {
+        var wasDisplayed = TrayIconController.IsIconDisplayed(hwnd, identity);
+
+        if (!TrayIconController.TryHideByState(hwnd, identity)) return false;
+        if (!wasDisplayed) return true;
+
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            Thread.Sleep(20);
+            if (!TrayIconController.IsIconDisplayed(hwnd, identity)) return true;
+        }
+
+        // 状态位设了但图标还在显示：清回去（不留半吊子状态），并如实告诉用户没有隐藏成功
+        TrayIconController.TryShowByState(hwnd, identity);
+        return false;
+    }
+
+    /// <summary>隐藏操作里"未隐藏成功"的汇总后缀（不支持非破坏性隐藏的图标）。</summary>
+    private static string BuildFailSuffix(int failed)
+        => failed > 0 ? $"（{failed} 个未隐藏：该图标不支持非破坏性隐藏）" : string.Empty;
+
     /// <summary>隐藏操作里"被跳过"的汇总后缀。</summary>
     private static string BuildSkipSuffix(int skipped)
         => skipped > 0 ? $"（跳过 {skipped} 个：该程序不支持托盘重建）" : string.Empty;
 
     /// <summary>
     /// 保存隐藏备份到 config.json。
-
     /// 每次保存都是整份 JSON，短时间内连续操作（批量隐藏/恢复、快捷键连按）没必要写多次，
     /// 因此做一次轻量去抖：只用一个 UI 计时器，不引入后台线程竞态。
     /// </summary>
@@ -2075,6 +2148,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         /// <summary>注册图标所用的窗口句柄（可能为 0，会在恢复过程中补定位）。</summary>
         public IntPtr Hwnd { get; set; }
 
+        /// <summary>该条目是非破坏性状态隐藏（清除状态位即可恢复）。</summary>
+        public bool IsStateMode { get; set; }
+
+        /// <summary>由目标程序自己重新注册回来的（只有这种成功才算"它支持托盘重建"）。</summary>
+        public bool OwnerRebuilt { get; set; }
+
+        /// <summary>状态清除失败但注册还在：语义不明，按失败处理，不得谎报恢复。</summary>
+        public bool Ambiguous { get; set; }
+
         /// <summary>图标已经在托盘里（目标程序自己注册回来，或本来就没被真正删除）。</summary>
         public bool Registered { get; set; }
 
@@ -2082,8 +2164,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         public bool Waiting { get; set; }
     }
 
-    /// <summary>一次批量恢复的结果，用于拼装状态栏文案。</summary>
-    private readonly record struct RestoreOutcome(int Restored, int Failed, int Degraded, string[] DegradedNames);
+    /// <summary>
+    /// 一次批量恢复的结果，用于拼装状态栏文案。
+    /// Restored = 成功；Failed = 目标程序不响应托盘重建（保持隐藏，不伪造）；
+    /// Cleaned = 进程已退出、记录已清理（不算失败）；UnsupportedNames = 需要重启才能恢复的程序名。
+    /// </summary>
+    private readonly record struct RestoreOutcome(
+        int Restored,
+        int Failed,
+        int Cleaned,
+        string[] UnsupportedNames);
 
     /// <summary>
     /// 运行中进程索引（可执行路径 / 进程名 → 进程），带 1.5 秒 TTL。

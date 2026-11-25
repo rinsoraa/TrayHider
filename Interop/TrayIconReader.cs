@@ -16,7 +16,7 @@ namespace TrayHider.Interop;
 ///   InitialTooltip / IconSnapshot / IsPromoted。
 ///
 /// 说明：本类只负责"读取"枚举数据。真正的隐藏/显示由 TrayIconController
-/// 通过 Shell_NotifyIcon 的 NIM_DELETE / NIM_ADD 完成（跨进程、立即生效）。
+/// 通过 Shell_NotifyIcon 的 NIF_STATE/NIS_HIDDEN 完成（跨进程、立即生效，且保留程序自己的回调）。
 /// </summary>
 internal sealed class TrayIconReader
 {
@@ -136,46 +136,9 @@ internal sealed class TrayIconReader
     }
 }
 
-/// <summary>托盘图标条目（来自注册表的原始数据）。</summary>
-public sealed class TrayIconEntry
-{
-    public string SubKeyName { get; set; } = string.Empty;
-    public string ExecutablePath { get; set; } = string.Empty;
-    public uint? Uid { get; set; }
-    public string ToolTip { get; set; } = string.Empty;
-    public string Publisher { get; set; } = string.Empty;
-    public string IconGuid { get; set; } = string.Empty;
-    public byte[]? IconSnapshot { get; set; }
-
-    /// <summary>注册图标所用窗口的类名（隐藏时记录，供恢复时按类名重新定位窗口）。</summary>
-    public string WindowClassName { get; set; } = string.Empty;
-
-    /// <summary>null 表示未设置（跟随系统默认）。仅用于展示图标所在面板。</summary>
-    public bool? IsPromoted { get; set; }
-
-    /// <summary>显示名：优先提示文本，其次文件名。</summary>
-    public string DisplayName
-    {
-        get
-        {
-            var tip = ToolTip.Trim();
-            if (!string.IsNullOrEmpty(tip))
-            {
-                var line = tip.Split('\n', '\r').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l));
-                if (!string.IsNullOrWhiteSpace(line)) return line.Trim();
-            }
-
-            try
-            {
-                return Path.GetFileNameWithoutExtension(ExecutablePath);
-            }
-            catch
-            {
-                return ExecutablePath;
-            }
-        }
-    }
-}
+// 说明：TrayIconEntry / TrayHideMode 已迁到 Models\TrayIconEntry.cs
+// （那里是本软件"隐藏状态模型"的唯一出处；命名空间仍是 TrayHider.Interop，
+//   因此 AppConfig 等既有引用无需改动）。
 
 /// <summary>已知文件夹 GUID → 真实路径。</summary>
 internal static class KnownFolderMap
