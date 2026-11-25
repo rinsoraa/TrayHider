@@ -1,8 +1,9 @@
 <Window x:Class="TrayHider.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="设置"
-        Width="560" Height="520"
+        xmlns:services="clr-namespace:TrayHider.Services"
+        Title="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Title]}"
+        Width="600" Height="760"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource App.Background}"
@@ -11,6 +12,123 @@
         Foreground="{DynamicResource App.TextPrimary}"
         UseLayoutRounding="True"
         WindowStyle="None">
+
+    <Window.Resources>
+        <!-- 语言下拉：应用内样式（系统默认弹层与页面其它控件风格不一致） -->
+        <Style x:Key="AppComboBoxItem" TargetType="ComboBoxItem">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="{DynamicResource App.FontSize.Caption}" />
+            <Setter Property="Foreground" Value="{DynamicResource App.TextPrimary}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemRoot"
+                                Background="Transparent"
+                                CornerRadius="4"
+                                Margin="4,1"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              ContentStringFormat="{TemplateBinding ContentStringFormat}"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource App.ControlFillHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource App.ControlFillPressed}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AppComboBox" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource App.TextPrimary}" />
+            <Setter Property="FontSize" Value="{DynamicResource App.FontSize.Body}" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource AppComboBoxItem}" />
+            <Setter Property="MaxDropDownHeight" Value="240" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="Root" MinHeight="30">
+                            <ToggleButton x:Name="Toggle"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Chrome"
+                                                Background="{DynamicResource App.ControlFill}"
+                                                BorderBrush="{DynamicResource App.Border}"
+                                                BorderThickness="1"
+                                                CornerRadius="6"
+                                                Padding="10,6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource App.ControlFillHover}" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter x:Name="SelectionPresenter"
+                                              IsHitTestVisible="False"
+                                              Margin="12,0,30,0"
+                                              VerticalAlignment="Center"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
+
+                            <Path x:Name="Arrow"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  Data="M 0 0 L 4 4 L 8 0"
+                                  Stroke="{DynamicResource App.TextSecondary}"
+                                  StrokeThickness="1.4"
+                                  IsHitTestVisible="False" />
+
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Placement="Bottom"
+                                   PopupAnimation="Fade"
+                                   StaysOpen="False"
+                                   Focusable="False">
+                                <Border Background="{DynamicResource App.ControlFill}"
+                                        BorderBrush="{DynamicResource App.Border}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Margin="0,4,0,0"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,4">
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
 
     <Border Background="{DynamicResource App.Background}">
         <Grid>
@@ -22,7 +140,7 @@
             <!-- 标题栏 -->
             <Grid Grid.Row="0" Height="48" Background="Transparent"
                   MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
-                <TextBlock Text="设置"
+                <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Title]}"
                            Margin="20,0,0,0"
                            VerticalAlignment="Center"
                            FontSize="{DynamicResource App.FontSize.Subtitle}"
@@ -40,7 +158,7 @@
                 <StackPanel Margin="20,4,20,24">
 
                     <!-- ==================== 启动与后台 ==================== -->
-                    <TextBlock Text="启动与后台"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Startup]}"
                                Margin="2,0,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -58,8 +176,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="开机自动启动" />
-                                    <TextBlock Text="登录 Windows 后自动在后台运行，并恢复上次的隐藏状态。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.AutoStart.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.AutoStart.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -79,7 +197,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="隐藏本软件的托盘图标" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.HideSelfTray.Title]}" />
                                     <TextBlock Text="{Binding SelfIconHint}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
@@ -100,8 +218,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="关闭窗口时最小化到托盘" />
-                                    <TextBlock Text="关闭后隐藏守护继续运行，避免已隐藏的图标重新出现。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.MinimizeToTray.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.MinimizeToTray.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
@@ -114,8 +232,94 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ==================== 快捷键 ==================== -->
-                    <TextBlock Text="唤出主窗口的快捷键"
+                    <!-- ==================== 窗口隐藏 ==================== -->
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.WindowHiding]}"
+                               Margin="2,22,0,8"
+                               FontSize="{DynamicResource App.FontSize.Caption}"
+                               Foreground="{DynamicResource App.TextSecondary}" />
+
+                    <Border x:Name="WindowOptionsCard"
+                            Background="{DynamicResource App.CardBackground}"
+                            BorderBrush="{DynamicResource App.Border}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="4">
+                        <StackPanel>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.HideAppTrayWithWindow.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.HideAppTrayWithWindow.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <CheckBox Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          IsChecked="{Binding HideAppTrayIconWithWindow, Mode=TwoWay}" />
+                            </Grid>
+
+                            <Border Height="1" Background="{DynamicResource App.Divider}" Margin="14,0" />
+
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreWindowsOnExit.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreWindowsOnExit.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <CheckBox Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          IsChecked="{Binding RestoreWindowsOnExit, Mode=TwoWay}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ==================== 权限 ==================== -->
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Permission]}"
+                               Margin="2,22,0,8"
+                               FontSize="{DynamicResource App.FontSize.Caption}"
+                               Foreground="{DynamicResource App.TextSecondary}" />
+
+                    <Border Background="{DynamicResource App.CardBackground}"
+                            BorderBrush="{DynamicResource App.Border}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Permission.Current]}" />
+                                <TextBlock Text="{Binding ElevationHint, RelativeSource={RelativeSource AncestorType=Window}}"
+                                           Margin="0,3,0,0"
+                                           TextWrapping="Wrap"
+                                           FontSize="{DynamicResource App.FontSize.Caption}"
+                                           Foreground="{DynamicResource App.TextTertiary}" />
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    x:Name="RelaunchElevatedButton"
+                                    Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Permission.Relaunch]}"
+                                    Style="{StaticResource StandardButton}"
+                                    VerticalAlignment="Center"
+                                    Click="RelaunchElevated_Click" />
+                        </Grid>
+                    </Border>
+
+                    <!-- ==================== 界面与运行方式 ==================== -->
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Group]}"
                                Margin="2,22,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -126,42 +330,189 @@
                             CornerRadius="8"
                             Padding="14,12">
                         <StackPanel>
-                        <Grid>
+                            <!-- 语言 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <!-- 标题固定显示中英两种文字，说明文字仍随语言本地化 -->
+                                    <TextBlock Text="语言 / Language" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Language.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <ComboBox x:Name="LanguageCombo"
+                                          Grid.Column="1"
+                                          Width="180"
+                                          Style="{StaticResource AppComboBox}"
+                                          ToolTip="{Binding SelectedLanguage.Label, RelativeSource={RelativeSource AncestorType=Window}}"
+                                          VerticalAlignment="Center"
+                                          ItemsSource="{Binding LanguageOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                          DisplayMemberPath="Label"
+                                          SelectedValuePath="Value"
+                                          SelectedValue="{Binding SelectedLanguageValue, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </Grid>
+
+                            <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,14,0,14" />
+
+                            <!-- 隐藏图标后退出（不常驻）：登录后应用隐藏并退出；是否周期轮询由下面的子选项决定。 -->
+                            <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOnce.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOnce.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <CheckBox x:Name="RunOnceToggle"
+                                          Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          VerticalAlignment="Center"
+                                          IsChecked="{Binding RunOnceEnabled, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </Grid>
+
+                            <!-- 轮询子选项：仅在启用不常驻模式后出现 -->
+                            <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,10,0,10"
+                                    Visibility="{Binding PollingRowVisibility, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            <Grid Margin="0,0,0,6"
+                                  Visibility="{Binding PollingRowVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOncePolling.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOncePolling.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <CheckBox x:Name="RunOncePollingToggle"
+                                          Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          VerticalAlignment="Center"
+                                          IsChecked="{Binding RunOncePolling, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </Grid>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ==================== 快捷键 ==================== -->
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Hotkeys]}"
+                               Margin="2,22,0,8"
+                               FontSize="{DynamicResource App.FontSize.Caption}"
+                               Foreground="{DynamicResource App.TextSecondary}" />
+
+                    <Border Background="{DynamicResource App.CardBackground}"
+                            BorderBrush="{DynamicResource App.Border}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14,10">
+                        <StackPanel>
+                        <ItemsControl x:Name="HotkeyList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,7">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Title}" />
+                                            <TextBlock Text="{Binding Description}"
+                                                       Margin="0,3,0,0"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="{DynamicResource App.FontSize.Caption}"
+                                                       Foreground="{DynamicResource App.TextTertiary}" />
+                                        </StackPanel>
+
+                                        <Border Grid.Column="1"
+                                                Background="{DynamicResource App.ControlFill}"
+                                                BorderBrush="{DynamicResource App.Border}"
+                                                BorderThickness="1"
+                                                CornerRadius="6"
+                                                Padding="10,5"
+                                                Margin="0,0,8,0"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Text}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="{DynamicResource App.FontSize.Caption}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="200"
+                                                       ToolTip="{Binding Text}" />
+                                        </Border>
+
+                                        <Button Grid.Column="2"
+                                                Content="×"
+                                                Style="{StaticResource StandardButton}"
+                                                MinWidth="30"
+                                                Width="30"
+                                                Padding="8,3"
+                                                Margin="0,0,8,0"
+                                                ToolTip="{Binding ClearTip}"
+                                                Visibility="{Binding ClearButtonVisibility}"
+                                                VerticalAlignment="Center"
+                                                Click="HotkeyClear_Click" />
+
+                                        <Button Grid.Column="3"
+                                                Content="{Binding ButtonText}"
+                                                Style="{StaticResource StandardButton}"
+                                                MinWidth="150"
+                                                Padding="10,3"
+                                                VerticalAlignment="Center"
+                                                Click="HotkeyRow_Click" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Grid Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                <TextBlock Text="当前快捷键" />
-                                <TextBlock Text="无论本软件图标是否隐藏，都可用该快捷键唤出主窗口。"
-                                           Margin="0,3,0,0"
-                                           TextWrapping="Wrap"
-                                           FontSize="{DynamicResource App.FontSize.Caption}"
-                                           Foreground="{DynamicResource App.TextTertiary}" />
-                            </StackPanel>
-                            <Border Grid.Column="1"
-                                    Background="{DynamicResource App.ControlFill}"
-                                    BorderBrush="{DynamicResource App.Border}"
-                                    BorderThickness="1"
-                                    CornerRadius="6"
-                                    Padding="12,6"
-                                    VerticalAlignment="Center">
-                                <TextBlock Text="{Binding HotkeyText}"
-                                           FontFamily="Consolas"
-                                           FontSize="{DynamicResource App.FontSize.Caption}" />
-                            </Border>
+
+                            <CheckBox x:Name="WinModifierToggle"
+                                      Grid.Column="0"
+                                      Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.WinCheck]}"
+                                      ToolTip="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.WinCheckTip]}"
+                                      VerticalAlignment="Center"
+                                      FontSize="{DynamicResource App.FontSize.Caption}" />
+
+                            <Button Grid.Column="1"
+                                    Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.Reset]}"
+                                    Style="{StaticResource StandardButton}"
+                                    ToolTip="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.ResetTip]}"
+                                    VerticalAlignment="Center"
+                                    Click="ResetHotkeys_Click" />
                         </Grid>
 
-                        <Button x:Name="ChangeHotkeyButton"
-                                Content="修改快捷键"
-                                Style="{StaticResource StandardButton}"
-                                Margin="0,12,0,0"
-                                Click="ChangeHotkey_Click" />
+                        <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Hotkeys.Hint]}"
+                                   Margin="0,8,0,2"
+                                   TextWrapping="Wrap"
+                                   FontSize="{DynamicResource App.FontSize.Caption}"
+                                   Foreground="{DynamicResource App.TextTertiary}" />
                         </StackPanel>
                     </Border>
 
                     <!-- ==================== 关于与操作 ==================== -->
-                    <TextBlock Text="其他"
+                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Group.Other]}"
                                Margin="2,22,0,8"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextSecondary}" />
@@ -178,15 +529,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="恢复所有被隐藏的图标" />
-                                    <TextBlock Text="清空隐藏记录。图标将在对应程序重新注册后回到托盘。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreAll.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RestoreAll.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="全部恢复"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Common.RestoreAll]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="RestoreAll_Click" />
@@ -200,7 +551,29 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="配置文件位置" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Repair.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Repair.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Repair.Button]}"
+                                        Style="{StaticResource StandardButton}"
+                                        VerticalAlignment="Center"
+                                        Click="RepairDegraded_Click" />
+                            </Grid>
+
+                            <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,14,0,14" />
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.ConfigPath.Title]}" />
                                     <TextBlock Text="{Binding ConfigPathText}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
@@ -208,7 +581,7 @@
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="打开目录"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.ConfigPath.Open]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="OpenConfigDir_Click" />
@@ -222,15 +595,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                    <TextBlock Text="退出程序" />
-                                    <TextBlock Text="退出后将不再隐藏任何图标。"
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Exit.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Exit.Description]}"
                                                Margin="0,3,0,0"
                                                TextWrapping="Wrap"
                                                FontSize="{DynamicResource App.FontSize.Caption}"
                                                Foreground="{DynamicResource App.TextTertiary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="退出"
+                                        Content="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.Exit.Button]}"
                                         Style="{StaticResource StandardButton}"
                                         VerticalAlignment="Center"
                                         Click="Exit_Click" />
@@ -238,7 +611,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="托盘图标管家 v1.1.0"
+                    <TextBlock Text="{Binding FooterText, RelativeSource={RelativeSource AncestorType=Window}}"
                                Margin="2,22,0,0"
                                FontSize="{DynamicResource App.FontSize.Caption}"
                                Foreground="{DynamicResource App.TextTertiary}" />

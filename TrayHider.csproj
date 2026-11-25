@@ -14,11 +14,13 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
-    <DefaultItemExcludes>$(DefaultItemExcludes);src/**;build/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);src/**;build/**;dist/**;tests/**</DefaultItemExcludes>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- WPF 生成 Main，不调用 WinForms 的 ApplicationConfiguration.Initialize()。
+         必须用嵌入 apphost 的 manifest 在首个 HWND 创建前启用 PMv2。 -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
-    <Version>1.1.0</Version>
+    <Version>1.2.8</Version>
     <Product>托盘图标管家</Product>
     <AssemblyTitle>托盘图标管家</AssemblyTitle>
     <Company>TrayHider</Company>
@@ -26,8 +28,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="TrayHider.Checks" />
+    <InternalsVisibleTo Include="TrayHider.TrayModeChecks" />
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\app.png" />
+    <!-- 运行期语言文案：按 Strings.<lang>.<area>.json 分区分文件维护，启动时按语言合并 -->
+    <EmbeddedResource Include="Services\Localization\Strings.*.json" />
   </ItemGroup>
 
 </Project>

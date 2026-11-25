@@ -11,30 +11,55 @@ namespace TrayHider;
 
 public partial class MainWindow : Window
 {
-    private readonly MainViewModel _viewModel;
+    private readonly MainViewModel _trayViewModel;
+    private readonly WindowListViewModel _windowViewModel;
+
+    /// <summary>托盘图标分区的单击延时定时器（用于区分单击勾选与双击隐藏/显示）。</summary>
     private readonly Dictionary<TrayIconItem, DispatcherTimer> _clickTimers = new();
+
+    /// <summary>窗口分区的单击延时定时器（同上）。</summary>
+    private readonly Dictionary<WindowItem, DispatcherTimer> _windowClickTimers = new();
+
     private SettingsWindow? _settingsWindow;
     private bool _reallyClosing;
+    private bool _showingWindowSection;
 
-    public MainWindow(MainViewModel viewModel)
+    public MainWindow(MainViewModel trayViewModel, WindowListViewModel windowViewModel)
     {
         InitializeComponent();
-        _viewModel = viewModel;
-        DataContext = viewModel;
+
+        _trayViewModel = trayViewModel;
+        _windowViewModel = windowViewModel;
+
+        DataContext = trayViewModel;
+        WindowPanel.DataContext = windowViewModel;
 
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
+
+        // 快捷键打到本软件自己的窗口上时，把主窗口收到托盘
+        _windowViewModel.HideSelfRequested += (_, _) => MinimizeToTray();
+
+        // 列表条目被移除时清理残留的单击延时定时器，避免字典无限增长
+        _trayViewModel.Icons.CollectionChanged += (_, _) => PruneClickTimers();
+        _windowViewModel.Windows.CollectionChanged += (_, _) => PruneWindowClickTimers();
+
+        ApplySection(showWindows: false);
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         WindowChrome.Apply(this);
-        _viewModel.Start();
+        _trayViewModel.Start();
+        _windowViewModel.Start();
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
-        => _viewModel.SetWindowVisible(IsVisible);
+    {
+        _trayViewModel.SetWindowVisible(IsVisible);
+        _windowViewModel.SetWindowVisible(IsVisible);
+    }
 
     // ---------------------------------------------------------------- 标题栏
 
@@ -67,12 +92,13 @@ public partial class MainWindow : Window
     {
         if (_reallyClosing) return;
 
-        if (_viewModel.MinimizeToTrayOnClose)
+        if (_trayViewModel.MinimizeToTrayOnClose)
         {
             e.Cancel = true;
             Hide();
-            _viewModel.SetWindowVisible(false);
-            _viewModel.StatusText = "已最小化到托盘，隐藏守护继续运行";
+            _trayViewModel.SetWindowVisible(false);
+            _windowViewModel.SetWindowVisible(false);
+            _trayViewModel.StatusText = Loc.T("Main.Status.MinimizedToTray");
             return;
         }
 
@@ -83,7 +109,15 @@ public partial class MainWindow : Window
     public void RequestShutdown()
     {
         _reallyClosing = true;
-        _viewModel.Dispose();
+
+        ClearClickTimers();
+        ClearWindowClickTimers();
+
+        // 退出前把被隐藏的窗口恢复回去，绝不把用户的窗口留在隐藏态
+        _windowViewModel.RestoreAllOnExit();
+        _windowViewModel.Dispose();
+
+        _trayViewModel.Dispose();
         Application.Current.Shutdown();
     }
 
@@ -95,13 +129,54 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.Normal;
         }
+
         Activate();
         Topmost = true;
         Topmost = false;
         Focus();
+
+        if (_showingWindowSection)
+        {
+            _windowViewModel.Refresh();
+        }
     }
 
-    // ---------------------------------------------------------------- 列表交互
+    /// <summary>把主窗口收到系统托盘（程序与快捷键继续可用）。</summary>
+    private void MinimizeToTray()
+    {
+        Hide();
+        _trayViewModel.SetWindowVisible(false);
+        _windowViewModel.SetWindowVisible(false);
+        _trayViewModel.StatusText = Loc.T("Main.Status.MinimizedToTray");
+    }
+
+    // ---------------------------------------------------------------- 分区切换
+
+    private void TraySection_Click(object sender, RoutedEventArgs e) => ApplySection(showWindows: false);
+
+    private void WindowSection_Click(object sender, RoutedEventArgs e) => ApplySection(showWindows: true);
+
+    /// <summary>
+    /// 用两个按钮拼出分段切换效果：选中项用 AccentButton，未选中项用 StandardButton，
+    /// 同时切换两个分区容器的 Visibility（不引入 TabControl，避免改动主题样式）。
+    /// </summary>
+    private void ApplySection(bool showWindows)
+    {
+        _showingWindowSection = showWindows;
+
+        TrayPanel.Visibility = showWindows ? Visibility.Collapsed : Visibility.Visible;
+        WindowPanel.Visibility = showWindows ? Visibility.Visible : Visibility.Collapsed;
+
+        TraySectionButton.Style = (Style)FindResource(showWindows ? "StandardButton" : "AccentButton");
+        WindowSectionButton.Style = (Style)FindResource(showWindows ? "AccentButton" : "StandardButton");
+
+        if (showWindows)
+        {
+            _windowViewModel.Refresh();
+        }
+    }
+
+    // ---------------------------------------------------------------- 托盘图标列表交互
 
     private void Row_Click(object sender, MouseButtonEventArgs e)
     {
@@ -114,7 +189,8 @@ public partial class MainWindow : Window
             {
                 pending.Stop();
             }
-            _viewModel.ToggleItem(item);
+
+            _trayViewModel.ToggleItem(item);
             return;
         }
 
@@ -125,54 +201,178 @@ public partial class MainWindow : Window
             timer.Stop();
             _clickTimers.Remove(item);
             item.IsSelected = !item.IsSelected;
-            _viewModel.UpdateCounters();
         };
         _clickTimers[item] = timer;
         timer.Start();
     }
 
-    // ---------------------------------------------------------------- 工具条动作
+    /// <summary>清理已经不在列表里的条目的延时定时器，防止定时器与字典无限累积。</summary>
+    private void PruneClickTimers()
+    {
+        if (_clickTimers.Count == 0) return;
+
+        foreach (var (item, timer) in _clickTimers.ToList())
+        {
+            if (_trayViewModel.Icons.Contains(item)) continue;
+
+            timer.Stop();
+            _clickTimers.Remove(item);
+        }
+    }
+
+    private void ClearClickTimers()
+    {
+        foreach (var timer in _clickTimers.Values)
+        {
+            timer.Stop();
+        }
+
+        _clickTimers.Clear();
+    }
+
+    // ---------------------------------------------------------------- 窗口列表交互
+
+    private void WindowRow_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: WindowItem item }) return;
+
+        if (e.ClickCount == 2)
+        {
+            if (_windowClickTimers.Remove(item, out var pending))
+            {
+                pending.Stop();
+            }
+
+            _windowViewModel.ToggleItem(item);
+            return;
+        }
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(280) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _windowClickTimers.Remove(item);
+            item.IsSelected = !item.IsSelected;
+            _trayViewModel.UpdateCounters();
+            _windowViewModel.UpdateCounters();
+        };
+        _windowClickTimers[item] = timer;
+        timer.Start();
+    }
+
+    private void PruneWindowClickTimers()
+    {
+        if (_windowClickTimers.Count == 0) return;
+
+        foreach (var (item, timer) in _windowClickTimers.ToList())
+        {
+            if (_windowViewModel.Windows.Contains(item)) continue;
+
+            timer.Stop();
+            _windowClickTimers.Remove(item);
+        }
+    }
+
+    private void ClearWindowClickTimers()
+    {
+        foreach (var timer in _windowClickTimers.Values)
+        {
+            timer.Stop();
+        }
+
+        _windowClickTimers.Clear();
+    }
+
+    // ---------------------------------------------------------------- 托盘图标工具条动作
 
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel.SelectAll();
-        _viewModel.StatusText = "已勾选全部图标";
+        _trayViewModel.SelectAll();
+        _trayViewModel.StatusText = Loc.T("Main.Status.AllChecked");
     }
 
     private void Invert_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel.InvertSelection();
-        _viewModel.StatusText = "已反选";
+        _trayViewModel.InvertSelection();
+        _trayViewModel.StatusText = Loc.T("Main.Status.Inverted");
     }
 
     private void ClearSelection_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel.ClearSelection();
-        _viewModel.StatusText = "已取消所有勾选";
+        _trayViewModel.ClearSelection();
+        _trayViewModel.StatusText = Loc.T("Main.Status.NoneChecked");
     }
 
     private void HideSelected_Click(object sender, RoutedEventArgs e)
-        => _viewModel.ApplySelected();
+        => _trayViewModel.ApplySelected();
 
     private void ShowSelected_Click(object sender, RoutedEventArgs e)
-        => _viewModel.RestoreSelected();
+        => _trayViewModel.RestoreSelected();
 
     private void HideAll_Click(object sender, RoutedEventArgs e)
     {
         var result = System.Windows.MessageBox.Show(this,
-            "确定要隐藏全部托盘图标吗？",
-            "确认全部隐藏",
+            Loc.T("Main.Confirm.HideAllTray.Text"),
+            Loc.T("Main.Confirm.HideAllTray.Title"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
 
         if (result == System.Windows.MessageBoxResult.Yes)
         {
-            _viewModel.HideAll();
+            _trayViewModel.HideAll();
         }
     }
 
     private void ShowAll_Click(object sender, RoutedEventArgs e)
-        => _viewModel.RestoreAll();
+        => _trayViewModel.RestoreAll();
+
+    // ---------------------------------------------------------------- 窗口工具条动作
+
+    private void WindowSelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        _windowViewModel.SelectAll();
+        _windowViewModel.StatusText = Loc.T("Main.Status.AllChecked");
+    }
+
+    private void WindowInvert_Click(object sender, RoutedEventArgs e)
+    {
+        _windowViewModel.InvertSelection();
+        _windowViewModel.StatusText = Loc.T("Main.Status.Inverted");
+    }
+
+    private void WindowClearSelection_Click(object sender, RoutedEventArgs e)
+    {
+        _windowViewModel.ClearSelection();
+        _windowViewModel.StatusText = Loc.T("Main.Status.NoneChecked");
+    }
+
+    private void WindowHideSelected_Click(object sender, RoutedEventArgs e)
+        => _windowViewModel.ApplySelected();
+
+    private void WindowRestoreSelected_Click(object sender, RoutedEventArgs e)
+        => _windowViewModel.RestoreSelected();
+
+    private void WindowHideAll_Click(object sender, RoutedEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(this,
+            Loc.T("Main.Confirm.HideAllWindows.Text"),
+            Loc.T("Main.Confirm.HideAllTray.Title"),
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (result == System.Windows.MessageBoxResult.Yes)
+        {
+            _windowViewModel.HideAllWindows();
+        }
+    }
+
+    private void WindowRestoreAll_Click(object sender, RoutedEventArgs e)
+        => _windowViewModel.RestoreAllWindows();
+
+    // ---------------------------------------------------------------- 设置
+
+    internal bool TryCaptureRegisteredHotkey(int modifiers, int virtualKey)
+        => _settingsWindow?.TryCaptureRegisteredHotkey(modifiers, virtualKey) == true;
 
     private void OpenSettings_Click(object sender, RoutedEventArgs e)
     {
@@ -182,7 +382,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _settingsWindow = new SettingsWindow(_viewModel, this)
+        _settingsWindow = new SettingsWindow(_trayViewModel, this)
         {
             Owner = this
         };

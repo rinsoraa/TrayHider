@@ -1,6 +1,9 @@
 using System.ComponentModel;
+using TrayHider.Services;
+
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
+using TrayHider.Interop;
 
 namespace TrayHider.Models;
 
@@ -12,6 +15,7 @@ public sealed class TrayIconItem : INotifyPropertyChanged
 {
     private bool _isSelected;
     private bool _isHidden;
+    private bool _callbackDegraded;
     private string _displayName = string.Empty;
     private string _processName = string.Empty;
     private ImageSource? _icon;
@@ -71,6 +75,20 @@ public sealed class TrayIconItem : INotifyPropertyChanged
         set { if (_isSelected != value) { _isSelected = value; OnPropertyChanged(); } }
     }
 
+    /// <summary>
+    /// 隐藏该图标时用的方式（非破坏性状态隐藏 / 破坏性删除）。
+    /// 决定恢复走哪条路径：State → 清除状态位即可，回调不受影响；Delete → 需要程序自己重新注册。
+    /// 由 MainViewModel 在隐藏/恢复时维护，随隐藏备份一起持久化。
+    /// </summary>
+    public TrayHideMode HideMode { get; set; } = TrayHideMode.Delete;
+
+    /// <summary>
+    /// 已经确认"这个程序不响应托盘重建、恢复不了"。
+    /// 置位后守护逻辑不再反复重隐它 —— 否则程序自己重启后图标又被藏掉，
+    /// 用户永远等不到它回来。仅运行时状态，不持久化。
+    /// </summary>
+    public bool RestoreBlocked { get; set; }
+
     /// <summary>当前是否已处于隐藏状态。</summary>
     public bool IsHidden
     {
@@ -81,16 +99,45 @@ public sealed class TrayIconItem : INotifyPropertyChanged
         }
     }
 
-    public string StateText => IsHidden ? "已隐藏" : "显示中";
+    /// <summary>
+    /// 恢复（显示）时目标程序未响应 TaskbarCreated，只能由本进程伪造 NIM_ADD 重建。
+    /// 这种状态下图标看得见，但 Shell 会把鼠标消息投给目标程序并不处理的回调消息，
+    /// 所以右键菜单/双击可能失效；重启该程序即可恢复（它会用自己的回调重新注册）。
+    /// 程序重启后（进程号变化）或图标重新被隐藏时自动清除。
+    /// </summary>
+    public bool CallbackDegraded
+    {
+        get => _callbackDegraded;
+        set
+        {
+            if (_callbackDegraded != value)
+            {
+                _callbackDegraded = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(StateText));
+            }
+        }
+    }
+
+    public string StateText => IsHidden
+        ? CoreText.T("Core.State.Hidden")
+        : _callbackDegraded ? CoreText.T("Core.State.Degraded") : CoreText.T("Core.State.Visible");
 
     public string SubTitle
     {
         get
         {
-            var proc = string.IsNullOrEmpty(ProcessName) ? "(进程名未知)" : ProcessName;
-            var run = IsRunning ? "运行中" : "未运行";
-            return $"{proc}  ·  {run}";
+            var proc = string.IsNullOrEmpty(ProcessName) ? CoreText.T("Core.SubTitle.UnknownProcess") : ProcessName;
+            var run = IsRunning ? CoreText.T("Core.SubTitle.Running") : CoreText.T("Core.SubTitle.NotRunning");
+            return CoreText.T("Core.SubTitle.Format", proc, run);
         }
+    }
+
+    /// <summary>语言切换后刷新所有本地化文本（状态与副标题）。</summary>
+    internal void RaiseLocalizedChanged()
+    {
+        OnPropertyChanged(nameof(StateText));
+        OnPropertyChanged(nameof(SubTitle));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -100,4 +147,38 @@ public sealed class TrayIconItem : INotifyPropertyChanged
 
     private void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+/// <summary>
+/// 核心层文案入口（MainViewModel / Models / WindowListViewModel / WindowHiderService 共用）。
+///
+/// 为什么还要这一层：模型可能在视图模型之外被直接构造（例如自检），
+/// 若此时 <see cref="Loc"/> 还没 ApplyLanguage 过，取文案会退化成键名。
+/// 这里做一次**幂等**的初始化兜底；视图模型随后用配置里的语言偏好覆盖即可。
+/// </summary>
+internal static class CoreText
+{
+    private static bool _initialized;
+
+    /// <summary>确保 Loc 至少应用过一次（按系统界面语言判定）；重复调用无副作用。</summary>
+    public static void EnsureInitialized()
+    {
+        if (_initialized) return;
+        _initialized = true;
+        Loc.ApplyLanguage("auto");
+    }
+
+    /// <summary>按键取文案。</summary>
+    public static string T(string key)
+    {
+        EnsureInitialized();
+        return Loc.T(key);
+    }
+
+    /// <summary>按键取文案并填充占位符。</summary>
+    public static string T(string key, params object?[] args)
+    {
+        EnsureInitialized();
+        return Loc.T(key, args);
+    }
 }
