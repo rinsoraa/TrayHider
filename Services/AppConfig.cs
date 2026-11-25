@@ -120,6 +120,12 @@ public sealed class AppConfig
     /// </summary>
     public bool RunOnceAndExit { get; set; }
 
+    /// <summary>
+    /// 不常驻模式下是否启用"周期轮询"（计划任务每 N 分钟补应用一次）。
+    /// 关闭时只在登录后应用一遍，等统计中的图标全部隐藏完就静默退出，不创建计划任务。
+    /// </summary>
+    public bool RunOncePolling { get; set; }
+
     /// <summary>不常驻模式下补应用隐藏状态的间隔（分钟，1~15）。</summary>
     public int RunOnceIntervalMinutes { get; set; } = 10;
 

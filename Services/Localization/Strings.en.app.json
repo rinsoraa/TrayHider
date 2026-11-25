@@ -22,5 +22,8 @@
   "App.RunOnce.ScheduleCreated": "Scheduled task \"{0}\" created: re-applies the hidden state every {1} minute(s).",
   "App.RunOnce.Enabled": "Non-resident mode enabled.",
   "App.RunOnce.Disabled": "Non-resident mode disabled; TrayHider is resident again.",
-  "App.RunOnce.Caveat": "\n\n· At logon the hidden state is applied once and the process exits; a scheduled task re-applies it, so apps started in between show their icon for up to one interval.\n· Hidden windows need a resident process, so windows are not hidden in this mode."
+  "App.RunOnce.Caveat": "\n\n· The autostart command line is switched to \"apply the hidden state once, then exit\".\n· Hidden windows need a resident process, so windows are not hidden in this mode.",
+  "App.RunOnce.PollingOn": "Scheduled task \"{0}\" created: re-applies the hidden state every {1} minute(s).",
+  "App.RunOnce.PollingOff": "Periodic polling is off: at logon TrayHider exits silently once every tracked icon is hidden, and no scheduled task is created.",
+  "App.RunOnce.NeedAutostart": "This feature depends on \"Start with Windows\": both must be on for TrayHider to hide the icons and exit by itself at logon.\n\nEnable \"Start with Windows\" now and turn this on?"
 }

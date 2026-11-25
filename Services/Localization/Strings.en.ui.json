@@ -59,7 +59,7 @@
   "Settings.Language.Chinese": "简体中文",
   "Settings.Language.English": "English",
   "Settings.RunOnce.Title": "Exit after hiding (don't stay resident)",
-  "Settings.RunOnce.Description": "At logon the app applies the hidden state once and exits; a scheduled task re-applies it periodically. Hidden windows need a running process, so windows are not hidden in this mode.",
+  "Settings.RunOnce.Description": "After \"Start with Windows\" is enabled, turning this on makes TrayHider apply the hidden state at logon and then exit by itself.",
   "Hotkey.ShowMain.Title": "Show main window",
   "Hotkey.ShowMain.Description": "Shows the main window even when this app's tray icon is hidden.",
   "Hotkey.ToggleHideWindow.Title": "Hide / restore current window",
@@ -102,5 +102,7 @@
   "Hotkey.Reset.Success": "All 5 global shortcuts were restored to their defaults; other settings are unchanged.",
   "Hotkey.Reset.Note": "All 5 global shortcuts were restored to their defaults; other settings are unchanged.\n\n{0}",
   "Hotkey.Reset.Failed": "Reset failed. Please try again.",
-  "Settings.ConfigPath.OpenFailed": "Could not open the folder: {0}"
+  "Settings.ConfigPath.OpenFailed": "Could not open the folder: {0}",
+  "Settings.RunOncePolling.Title": "Periodic polling",
+  "Settings.RunOncePolling.Description": "When on, a scheduled task re-applies the hidden state every 10 minutes (more reliable, but wakes the process periodically). When off, the state is applied once at logon and TrayHider exits silently as soon as every tracked icon is hidden."
 }

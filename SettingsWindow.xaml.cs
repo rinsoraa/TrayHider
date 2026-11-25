@@ -394,6 +394,26 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
         }
     }
 
+    /// <summary>轮询子选项的可见性：只有启用不常驻模式后才需要选择。</summary>
+    public System.Windows.Visibility PollingRowVisibility
+        => Config.RunOnceAndExit ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+    /// <summary>周期轮询开关：开启则每 10 分钟补应用一次，关闭则等统计图标全部隐藏完就静默退出。</summary>
+    public bool RunOncePolling
+    {
+        get => Config.RunOncePolling;
+        set
+        {
+            if (Config.RunOncePolling == value) return;
+
+            Config.RunOncePolling = value;
+            Config.Save();
+            var message = RunOnceService.SyncSchedule(Config);
+            OnPropertyChanged();
+            MessageBox.Show(this, message, AppTitleText(), MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     /// <summary>「隐藏图标后退出（不常驻）」开关：交给 RunOnceService 落盘/建计划任务，并把结果提示给用户。</summary>
     public bool RunOnceEnabled
     {
@@ -401,6 +421,21 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
         set
         {
             if (Config.RunOnceAndExit == value) return;
+
+            // 该功能只在"开机自启"下才有意义：未开启时先征得同意，再一起打开。
+            if (value && !_viewModel.RunAtStartup)
+            {
+                var answer = MessageBox.Show(this, Loc.T("App.RunOnce.NeedAutostart"), AppTitleText(),
+                    MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (answer != MessageBoxResult.Yes)
+                {
+                    OnPropertyChanged();
+            OnPropertyChanged(nameof(PollingRowVisibility));
+                    return;
+                }
+
+                _viewModel.RunAtStartup = true;
+            }
 
             var message = string.Empty;
             try
@@ -413,6 +448,7 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
             }
 
             OnPropertyChanged();
+            OnPropertyChanged(nameof(PollingRowVisibility));
 
             try
             {

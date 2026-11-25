@@ -154,15 +154,19 @@ internal static class RunOnceService
     public static string SetEnabled(AppConfig config, bool enabled)
     {
         config.RunOnceAndExit = enabled;
+        config.RunOnceIntervalMinutes = 10;   // 兜底轮询固定 10 分钟，避免旧配置残留的 3 分钟
 
         // 开机自启项要跟着改命令行参数（--apply-once / --minimized）
         if (config.RunAtStartup) StartupManager.SetEnabled(true);
         config.Save();
 
         var message = SyncSchedule(config);
-        return enabled
-            ? Loc.T("App.RunOnce.Enabled") + message + Loc.T("App.RunOnce.Caveat")
-            : Loc.T("App.RunOnce.Disabled") + message;
+        if (!enabled) return Loc.T("App.RunOnce.Disabled") + message;
+
+        var mode = config.RunOncePolling
+            ? Loc.T("App.RunOnce.PollingOn", TaskName, config.RunOnceIntervalMinutes)
+            : Loc.T("App.RunOnce.PollingOff");
+        return Loc.T("App.RunOnce.Enabled") + mode + Loc.T("App.RunOnce.Caveat");
     }
 
     /// <summary>按当前设置同步计划任务（开启则创建/刷新，关闭则删除）。返回给用户看的说明。</summary>
@@ -174,7 +178,7 @@ internal static class RunOnceService
             return Loc.T("App.RunOnce.NotExe");
         }
 
-        if (!config.RunOnceAndExit)
+        if (!config.RunOnceAndExit || !config.RunOncePolling)
         {
             return RemoveSchedule() ? Loc.T("App.RunOnce.ScheduleRemoved") : Loc.T("App.RunOnce.ScheduleAbsent");
         }

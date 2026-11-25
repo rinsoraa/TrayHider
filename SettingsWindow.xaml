@@ -359,7 +359,8 @@
 
                             <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,14,0,14" />
 
-                            <!-- 隐藏图标后退出（不常驻）：v1.2.3 起端到端验证通过（隐藏生效 + 进程退出 + 计划任务补应用）。 -->
+                            <!-- 隐藏图标后退出（不常驻）：登录后应用隐藏并退出；是否周期轮询由下面的子选项决定。 -->
+                            <StackPanel>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -379,6 +380,31 @@
                                           VerticalAlignment="Center"
                                           IsChecked="{Binding RunOnceEnabled, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
                             </Grid>
+
+                            <!-- 轮询子选项：仅在启用不常驻模式后出现 -->
+                            <Border Height="1" Background="{DynamicResource App.Divider}" Margin="0,10,0,10"
+                                    Visibility="{Binding PollingRowVisibility, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            <Grid Margin="0,0,0,6"
+                                  Visibility="{Binding PollingRowVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOncePolling.Title]}" />
+                                    <TextBlock Text="{Binding Source={x:Static services:Loc.Instance}, Path=[Settings.RunOncePolling.Description]}"
+                                               Margin="0,3,0,0"
+                                               TextWrapping="Wrap"
+                                               FontSize="{DynamicResource App.FontSize.Caption}"
+                                               Foreground="{DynamicResource App.TextTertiary}" />
+                                </StackPanel>
+                                <CheckBox x:Name="RunOncePollingToggle"
+                                          Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          VerticalAlignment="Center"
+                                          IsChecked="{Binding RunOncePolling, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </Grid>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 

@@ -59,7 +59,7 @@
   "Settings.Language.Chinese": "简体中文",
   "Settings.Language.English": "English",
   "Settings.RunOnce.Title": "隐藏图标后退出（不常驻）",
-  "Settings.RunOnce.Description": "登录时应用一次隐藏后退出进程，由计划任务定期补应用；被隐藏的窗口需要常驻进程，因此该模式下不隐藏窗口。",
+  "Settings.RunOnce.Description": "设置开机自启后，若开启此项，下次开机后隐藏完图标后会自动退出该软件。",
   "Hotkey.ShowMain.Title": "唤出主窗口",
   "Hotkey.ShowMain.Description": "无论本软件图标是否隐藏，都可用该快捷键唤出主窗口。",
   "Hotkey.ToggleHideWindow.Title": "隐藏 / 恢复当前窗口",
@@ -102,5 +102,7 @@
   "Hotkey.Reset.Success": "已把 5 个全局快捷键恢复为默认值，其它设置保持不变。",
   "Hotkey.Reset.Note": "已把 5 个全局快捷键恢复为默认值，其它设置保持不变。\n\n{0}",
   "Hotkey.Reset.Failed": "重置失败，请稍后重试。",
-  "Settings.ConfigPath.OpenFailed": "无法打开目录：{0}"
+  "Settings.ConfigPath.OpenFailed": "无法打开目录：{0}",
+  "Settings.RunOncePolling.Title": "周期轮询",
+  "Settings.RunOncePolling.Description": "开启后由计划任务每 10 分钟补应用一次隐藏状态（兜底更可靠，但会周期性唤醒进程）；关闭则只在登录后应用一遍，等统计里的图标全部隐藏完就静默退出。"
 }
