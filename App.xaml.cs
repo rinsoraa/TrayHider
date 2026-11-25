@@ -74,6 +74,9 @@ public partial class App : Application
     private EventWaitHandle? _listenerShutdown;
     private System.Threading.Thread? _activateListener;
 
+    /// <summary>空闲裁剪计时器（只在主窗口隐藏时生效）。</summary>
+    private DispatcherTimer? _idleTrimTimer;
+
     // ---- 自身托盘菜单：改为 TrayPopupMenu（原生 TrackPopupMenuEx），不再持有 WinForms 菜单 ----
 
     /// <summary>当前配置（设置界面读取快捷键文本、窗口选项时使用）。</summary>
@@ -165,6 +168,21 @@ public partial class App : Application
 
         CreateTrayIcon();
         ApplySelfTrayIconVisibility(_config.HideSelfTrayIcon);
+
+        // 空闲内存：主窗口收起后立刻让出工作集，之后每分钟做一次激进裁剪（内部 2 分钟冷却）
+        _mainWindow.IsVisibleChanged += (_, _) =>
+        {
+            if (_mainWindow is { IsLoaded: true, IsVisible: false }) MemoryTrimmer.TrimIdle(aggressive: false);
+        };
+        _idleTrimTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMinutes(1)
+        };
+        _idleTrimTimer.Tick += (_, _) =>
+        {
+            if (_mainWindow is { IsVisible: false }) MemoryTrimmer.TrimIdle(aggressive: true);
+        };
+        _idleTrimTimer.Start();
 
         // --minimized 由开机自启传入，直接缩到托盘
         if (e.Args.Any(a => string.Equals(a, "--minimized", StringComparison.OrdinalIgnoreCase)))
