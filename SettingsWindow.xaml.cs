@@ -33,13 +33,14 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
         DataContext = viewModel;
         PreviewKeyDown += SettingsWindow_PreviewKeyDown;
 
-        BuildHotkeyRows();
-
-        // 语言：先按配置生效，再建下拉；切换语言后选项文字本身也要跟着变
+        // 语言必须先按配置生效，快捷键行的标题/说明才不会是"构造那一刻"的旧语言；
+        // 订阅放在建行之前，保证之后每次切换都能整体重建。
         Loc.ApplyLanguage(Config.Language);
-        RebuildLanguageOptions();
         Loc.LanguageChanged += OnLanguageChanged;
         Closed += (_, _) => Loc.LanguageChanged -= OnLanguageChanged;
+
+        BuildHotkeyRows();
+        RebuildLanguageOptions();
 
         Loaded += (_, _) =>
         {
@@ -331,7 +332,11 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
     // ---------------------------------------------------------------- 界面语言 / 运行方式
 
     /// <summary>语言下拉项：<c>Value</c> 写进配置，<c>Label</c> 随当前语言刷新。</summary>
-    public sealed record LanguageOption(string Value, string Label);
+    public sealed record LanguageOption(string Value, string Label)
+    {
+        // 下拉项在某些模板路径下直接取 ToString()，这里保证显示的是本地化标签而不是 record 语法
+        public override string ToString() => Label;
+    }
 
     private List<LanguageOption> _languageOptions = new();
     private bool _rebuildingLanguage;
@@ -469,7 +474,16 @@ public partial class SettingsWindow : Window, System.ComponentModel.INotifyPrope
         }
     }
 
-    private void OnLanguageChanged(object? sender, EventArgs e) => RebuildLanguageOptions();
+    /// <summary>
+    /// 语言切换：下拉项文字、快捷键行的标题/说明/按钮文字、以及窗口自带的权限说明都要重算
+    /// （它们不是逐条绑定到 Loc 的，必须在这里主动刷新，否则会留着旧语言的文字）。
+    /// </summary>
+    private void OnLanguageChanged(object? sender, EventArgs e)
+    {
+        RebuildLanguageOptions();
+        BuildHotkeyRows();
+        OnPropertyChanged(nameof(ElevationHint));
+    }
 
     private void OpenConfigDir_Click(object sender, RoutedEventArgs e)
     {

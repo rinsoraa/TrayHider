@@ -147,6 +147,13 @@ internal sealed class Loc : INotifyPropertyChanged
             return string.Empty;
         }
 
+        if (_map.Count == 0)
+        {
+            // 首次访问发生在任何 ApplyLanguage 之前（例如单元检查、模型静态构造）：
+            // 先把默认语言装上，否则会返回键名。
+            ApplyLanguage(Auto);
+        }
+
         if (_map.TryGetValue(key, out var value))
         {
             return value;

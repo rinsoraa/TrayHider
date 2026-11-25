@@ -27,7 +27,7 @@ Check(Change(show, 8, 0x86) && manager.TryMatch(showId, 8, 0x86, out var action)
 Check(!Change(hide, 8, 0x86) && slots.Count == 5, "reject a duplicate without changing existing registrations");
 Check(Change(show) && slots.Count == 4 && !manager.TryMatch(showId, 8, 0x86, out _), "clear and ignore an already queued old hotkey");
 var reloaded = AppConfig.FromJson(config.ToJson());
-Check(reloaded.GetHotkey(show).IsUnassigned && reloaded.HotkeyVirtualKey == 0 && reloaded.GetHotkey(show).ToString() == "未设置", "clear survives serialization and legacy fields");
+Check(reloaded.GetHotkey(show).IsUnassigned && reloaded.HotkeyVirtualKey == 0 && reloaded.GetHotkey(show).IsUnassigned && reloaded.GetHotkey(show).ToString() == HotkeyCatalog.UnassignedText, "clear survives serialization and legacy fields");
 manager.UnregisterAll(); slots.Clear();
 Check(manager.RegisterConfigured(reloaded).Count == 0 && slots.Count == 4, "startup skips disabled actions without warning");
 config = reloaded;

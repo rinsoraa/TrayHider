@@ -27,7 +27,10 @@
                                 CornerRadius="4"
                                 Margin="4,1"
                                 Padding="{TemplateBinding Padding}">
-                            <ContentPresenter />
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              ContentStringFormat="{TemplateBinding ContentStringFormat}"
+                                              VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
@@ -52,7 +55,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
-                        <Grid x:Name="Root">
+                        <Grid x:Name="Root" MinHeight="30">
                             <ToggleButton x:Name="Toggle"
                                           Focusable="False"
                                           ClickMode="Press"
@@ -63,7 +66,8 @@
                                                 Background="{DynamicResource App.ControlFill}"
                                                 BorderBrush="{DynamicResource App.Border}"
                                                 BorderThickness="1"
-                                                CornerRadius="6">
+                                                CornerRadius="6"
+                                                Padding="10,6">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Style.Triggers>
@@ -80,7 +84,7 @@
 
                             <ContentPresenter x:Name="SelectionPresenter"
                                               IsHitTestVisible="False"
-                                              Margin="10,0,28,0"
+                                              Margin="12,0,30,0"
                                               VerticalAlignment="Center"
                                               Content="{TemplateBinding SelectionBoxItem}"
                                               ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
