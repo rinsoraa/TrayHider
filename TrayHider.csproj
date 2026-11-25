@@ -20,7 +20,7 @@
          必须用嵌入 apphost 的 manifest 在首个 HWND 创建前启用 PMv2。 -->
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
-    <Version>1.2.3</Version>
+    <Version>1.2.4</Version>
     <Product>托盘图标管家</Product>
     <AssemblyTitle>托盘图标管家</AssemblyTitle>
     <Company>TrayHider</Company>
